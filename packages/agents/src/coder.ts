@@ -41,6 +41,13 @@ Rules you MUST follow:
    code unrelated to the step.
 6. Do NOT write test files in this output — a separate Tester agent handles tests.
 7. Preserve the trailing newline of existing files. Use \\n at end of content.
+8. TypeScript strict patterns you MUST follow:
+   - Date arithmetic: use date1.getTime() - date2.getTime() or +date1 - +date2.
+     NEVER write date1 - date2 directly — TS strict mode rejects it (TS2362/TS2363).
+   - Use reply.code(N).send(...) for non-200 responses, matching the project's existing
+     error handling pattern. A bare 'return { error: ... }' sends 200, which is wrong.
+   - Type request.body / request.params at destructure: const { id } = request.params as { id: string }.
+   - Avoid implicit any: every function parameter needs an explicit type or inferred from context.
 
 Output ONLY valid JSON matching this schema:
 { "files": [{ "path": "src/file.ts", "content": "file contents here", "action": "create|modify|delete" }] }`;

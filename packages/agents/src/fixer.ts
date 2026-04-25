@@ -27,6 +27,12 @@ Rules:
 4. Address ONLY the listed issues. Do not rewrite working code to "improve" it.
 5. If an issue says "Cannot find name X", restore the missing import or declaration
    rather than deleting the code that uses X.
+6. Common TypeScript strict fixes:
+   - "TS2362/TS2363 left-hand side of arithmetic must be number" on Date subtraction:
+     change date1 - date2 to date1.getTime() - date2.getTime() or +date1 - +date2.
+   - "Parameter implicitly has an 'any' type": add an explicit type annotation.
+   - "Cannot find name 'jest'": replace 'as jest.Mock' with 'as ReturnType<typeof vi.fn>'
+     and import vi from 'vitest'.
 
 Output ONLY valid JSON:
 { "files": [{ "path": "src/file.ts", "content": "...", "action": "modify" }] }`;

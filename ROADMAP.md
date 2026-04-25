@@ -2,8 +2,8 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.18 работает (VSCode extension: GUI sidebar с проектами, задачами и live SSE)  
-**Последнее обновление**: 2026-04-23  
+**Статус проекта**: 🟢 v1.21 — working baseline для атомарных задач (две e2e-задачи прошли green-commit на deepseek-coder-v2:16b)  
+**Последнее обновление**: 2026-04-26  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
 ---
@@ -326,6 +326,54 @@ node packages/api/dist/index.js
 - [x] Orchestrator передаёт callback и в Coder, и в Fixer (с `source: 'fixer'` для разделения в UI)
 - [x] Self-healing semantics не сломаны: файлы НЕ пишутся на диск рано, Reviewer видит полный список перед approval
 - [x] 14 новых тестов: 10 для partial-JSON parser (string-awareness, escaped quotes, fence, malformed entry skip, 1-byte chunks через все границы, incomplete stream) + 4 для CoderAgent streaming (per-file callback порядок, no-callback fallback, fenced stream, callback ДО разрешения promise)
+
+### Context fidelity & reliability v1.21 (✅ реализовано)
+
+**Цель:** довести систему до working baseline на реальных задачах. Исправлены критические баги, мешавшие e2e-прогонам, и архитектурные дыры в формировании промптов.
+
+**Bugfixes (найдены при первом реальном запуске):**
+- [x] **glob ignored node_modules** — абсолютные пути + относительные ignore не исключали 2490 файлов в sandbox-проекте; фикс: `glob('**/*.ts', { cwd: absRoot, ignore })` в [graph-retriever.ts:163-171](packages/rag/src/graph-retriever.ts#L163-L171)
+- [x] **Validator на неверном `projectRoot`** — `TypeChecker`/`TestRunner` создавались с `config.projectRoot` (rag-system сам), а не корнем целевого проекта; фикс: добавлен публичный геттер `SafeWriter.root`, Orchestrator использует `this.writer.root`
+
+**Reliability — `COMMIT_ONLY_IF_VALID` (default true):**
+- [x] Раньше `runValidationLoop` коммитил даже после VALID✗ (3 attempts exhausted) → main засорялся битым кодом
+- [x] Теперь функция возвращает `{ passed, issuesCount }`; Orchestrator проверяет `config.git.commitOnlyIfValid` перед `git.commitChanges()`
+- [x] Новый event type `commit_skipped` в SSE; auto-branch создаётся, но коммит пропускается — files остаются в working tree для inspection
+
+**Reliability — graceful Tester + `TESTER_ENABLED`:**
+- [x] Один LLM-glitch в Tester (отсутствует поле `action` в JSON) убивал весь шаг → cascade-fail для step2-N
+- [x] Теперь `tester.execute()` обёрнут в try/catch — Tester лучшее усилие, шаг продолжается без тестов с warning
+- [x] `TESTER_ENABLED=true` (default) — флаг для полного отключения Tester (полезно при iterating над Coder качеством)
+
+**Planner — minimum-step prompting + hard cap:**
+- [x] System prompt Planner: explicit правила "trivial tasks = SINGLE step", "never plan tests as separate step", "combine create+register"
+- [x] `PLANNER_MAX_STEPS=50` (default) — Orchestrator усекает план до этого числа с вычищением dangling deps
+- [x] Понизить до `=1` для smoke-тестов = гарантированный одношаговый прогон
+
+**Context architecture — `ProjectConventions`:**
+- [x] Новый модуль [shared/src/project-conventions.ts](packages/shared/src/project-conventions.ts) — читает `package.json`+`tsconfig.json`, определяет: `testFramework` (vitest/jest/mocha/tap), `moduleType` (esm/cjs), `tsStrict`, `moduleResolution`, `needsJsSuffix`, `runtimeFrameworks`, `entryPoints`
+- [x] `buildPromptContext` в [shared/src/prompt-context.ts](packages/shared/src/prompt-context.ts) — собирает 4 секции: Project Conventions → Existing project files (full source) → Related snippets → Architectural design
+- [x] Orchestrator: при `executeStep` читает full source существующих файлов из retrieved context (через `retrieveContextItems` + `fs.readFileSync`), передаёт в Coder/Fixer
+- [x] Сильные маркеры границ файлов: `===== BEGIN FILE: path =====` / `===== END FILE: path =====` (uppercase, не валидный TypeScript) — модель не может случайно скопировать в output
+
+**System prompts — Coder/Fixer/Tester:**
+- [x] Coder: 7 явных правил (preserve imports при modify, follow conventions, prefer modify over create, .js suffix для NodeNext, никогда не копировать file markers, не писать тесты, preserve trailing newline)
+- [x] Fixer: surgical edits, "Cannot find name X" → restore import (не удалять код)
+- [x] Tester: explicit vitest mocking guide (`vi.fn()`, `vi.spyOn()`, запрет `as jest.Mock`), `app.inject()` вместо mock-of-app, exact import paths
+
+**Конфигурация:**
+- [x] `COMMIT_ONLY_IF_VALID=true` — git коммит только при passing validation
+- [x] `TESTER_ENABLED=true` — выключатель TesterAgent
+- [x] `PLANNER_MAX_STEPS=50` — hard cap на размер плана
+
+**E2E sandbox-тесты:**
+- [x] Task 1: "Add a GET /health endpoint that returns {status: 'ok'}" — 1 step, 1 файл, +5/-1 строка, идиоматический diff, validation passed, COMMIT
+- [x] Task 2: "Add Zod schema validation to POST /users" — 1 step, 1 файл, корректная schema (`name min 2`, `email format`), импорт `zod` добавлен, существующие routes сохранены, COMMIT
+
+**Известные ограничения:**
+- ⚠️ TesterAgent на `deepseek-coder-v2:16b` упорно генерирует jest-style моки (`as jest.Mock`) вопреки explicit vitest examples в промпте — модель не удерживает multi-rule инструкции для tests; обход = `TESTER_ENABLED=false`
+- ⚠️ Cross-step consistency не проверена — текущий baseline = `PLANNER_MAX_STEPS=1`; для многошаговых задач (3+ файла, разные подсистемы) нужна v1.22 (передача "newly created files" между шагами)
+- ⚠️ Validation ловит только typecheck+unit-tests, не runtime smoke (стёртый `app.listen()` прошёл validation в одном из прогонов)
 
 ### MCP проекты v1.16 (✅ реализовано)
 - [x] MCP server использует тот же `ProjectRegistry`+`ProjectManager`, что и API (общий `data/projects.db`)
