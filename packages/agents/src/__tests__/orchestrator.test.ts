@@ -21,7 +21,7 @@ vi.mock('@rag-system/safe-exec', () => ({
   },
   TestRunner: class { run = vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'mock' }); },
   TypeChecker: class { run = vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'mock' }); },
-  applyEdits: vi.fn((content: string) => ({ ok: true, result: content })),
+  applyEdits: vi.fn((content: string) => ({ ok: true, result: content, tolerantEdits: [] })),
 }));
 
 const { Orchestrator } = await import('../orchestrator.js');

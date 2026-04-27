@@ -99,4 +99,127 @@ describe('applyEdits', () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.result).toBe(`BEGIN\nmiddle\nFINISH`);
   });
+
+  it('reports empty tolerantEdits when every edit matches strictly', () => {
+    const r = applyEdits('hello', [{ search: 'hello', replace: 'world' }]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.tolerantEdits).toEqual([]);
+  });
+
+  describe('whitespace-tolerant fallback', () => {
+    it('matches a one-line minified search against multi-line target', () => {
+      // The qwen2.5-coder:32b L2.3 cumulative failure mode: model collapsed
+      // a multi-line existing block into a single line in `search`.
+      const before = `if (x) {\n  doIt();\n  more();\n}\n`;
+      const r = applyEdits(before, [
+        {
+          search: `if (x) { doIt(); more(); }`,
+          replace: `if (x) {\n  doIt();\n  log();\n  more();\n}`,
+        },
+      ]);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.result).toBe(`if (x) {\n  doIt();\n  log();\n  more();\n}\n`);
+        expect(r.tolerantEdits).toEqual([0]);
+      }
+    });
+
+    it('collapses repeated whitespace differences (tabs vs spaces, extra indent)', () => {
+      const before = `class A {\n\tfoo() {\n\t\treturn 1;\n\t}\n}\n`;
+      const r = applyEdits(before, [
+        {
+          search: `class A {\n  foo() {\n    return 1;\n  }\n}`,
+          replace: `class A {\n  foo() {\n    return 2;\n  }\n}`,
+        },
+      ]);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.result).toBe(`class A {\n  foo() {\n    return 2;\n  }\n}\n`);
+        expect(r.tolerantEdits).toEqual([0]);
+      }
+    });
+
+    it('preserves replace verbatim — does not normalize replace whitespace', () => {
+      // Replace contains its own deliberate formatting; tolerant matching must
+      // not touch it. The matched slice is what gets substituted out, not the
+      // search string itself.
+      const before = `function f() { return    1; }`;
+      const r = applyEdits(before, [
+        {
+          search: `function f() {\n  return 1;\n}`,
+          replace: `function f() {\n\treturn 42; // intentional tab\n}`,
+        },
+      ]);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.result).toBe(`function f() {\n\treturn 42; // intentional tab\n}`);
+        expect(r.tolerantEdits).toEqual([0]);
+      }
+    });
+
+    it('rejects ambiguity when tolerant pattern matches multiple places', () => {
+      // Two multi-line blocks; minified search would tolerant-match both.
+      const before = `if (x) {\n  foo();\n}\nif (x) {\n  foo();\n}\n`;
+      const r = applyEdits(before, [
+        { search: `if (x) { foo(); }`, replace: `if (x) bar();` },
+      ]);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toMatch(/ambiguous/);
+    });
+
+    it('strict path wins when both strict and tolerant could match', () => {
+      // 'foo bar' appears strict in the file. A tolerant match would also fire,
+      // but tolerantEdits must stay empty because we hit on strict first.
+      const before = `foo bar baz\nfoo  bar baz`;
+      const r = applyEdits(before, [
+        { search: `foo bar baz`, replace: `FOO BAR BAZ` },
+      ]);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.result).toBe(`FOO BAR BAZ\nfoo  bar baz`);
+        expect(r.tolerantEdits).toEqual([]);
+      }
+    });
+
+    it('escapes regex metacharacters in the tolerant pattern', () => {
+      // $, (, ), *, ., ?, [, ] — any of these in a literal search would break
+      // a naive regex build. Tolerant matching must escape them.
+      const before = `const price = $100.00 (USD); arr[0] = a*b;`;
+      const r = applyEdits(before, [
+        {
+          search: `const price = $100.00 (USD);   arr[0] = a*b;`,
+          replace: `const price = $200.00 (EUR); arr[0] = a*b;`,
+        },
+      ]);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.result).toBe(`const price = $200.00 (EUR); arr[0] = a*b;`);
+        expect(r.tolerantEdits).toEqual([0]);
+      }
+    });
+
+    it('refuses whitespace-only search (would match anywhere under \\s+)', () => {
+      const before = `keep this`;
+      const r = applyEdits(before, [
+        { search: `   \n  `, replace: `INJECTED` },
+      ]);
+      expect(r.ok).toBe(false);
+      // Strict miss → tolerant guard kicks in → reported as not-found, not ambiguous.
+      if (!r.ok) expect(r.error).toMatch(/not found/);
+    });
+
+    it('reports tolerant indices per-edit when mixed with strict edits', () => {
+      const before = `let a = 1;\nif (x) {\n  foo();\n}\nlet b = 2;\n`;
+      const r = applyEdits(before, [
+        { search: `let a = 1;`, replace: `const a = 1;` },          // strict
+        { search: `if (x) { foo(); }`, replace: `if (x) bar();` },  // tolerant (minified)
+        { search: `let b = 2;`, replace: `const b = 2;` },          // strict
+      ]);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.result).toBe(`const a = 1;\nif (x) bar();\nconst b = 2;\n`);
+        expect(r.tolerantEdits).toEqual([1]);
+      }
+    });
+  });
 });

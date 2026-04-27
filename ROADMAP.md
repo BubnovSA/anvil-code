@@ -2,8 +2,8 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.23 — patch-based editing работает; L1-L2 (clean) на qwen2.5-coder:32b — green commit, cumulative ограничен (см. docs/benchmarks/)  
-**Последнее обновление**: 2026-04-27  
+**Статус проекта**: 🟢 v1.24 — whitespace-tolerant edit fallback в applyEdits; 205/205 unit-тестов; первый Phase 2 шаг (см. `docs/benchmarks/runs/2026-04-28-v1.24-whitespace-tolerant.md`)  
+**Последнее обновление**: 2026-04-28  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
 ---
@@ -466,11 +466,26 @@ node packages/api/dist/index.js
 
 После v1.23 систематические улучшения. Каждое — отдельная итерация с полным regression run в `docs/benchmarks/runs/`. После всех — сравнительный анализ.
 
-#### v1.24 — Whitespace-tolerant edit matching (~4 часа)
-- [ ] `applyEdits` fallback: если strict match fail — попробовать с `\s+` → ` ` нормализацией
-- [ ] Точный диагностический message при tolerant match (логировать когда был использован)
-- [ ] Тесты: minified one-line search, mixed indentation, trailing whitespace
-- [ ] **Атакует:** новый failure mode v1.23 — search minification
+#### v1.24 — Whitespace-tolerant edit matching (✅ реализовано)
+
+**Цель:** Атакует failure mode v1.23 — search minification на qwen2.5-coder:32b (модель «сжимает» многострочный код в search-блок в одну строку, strict match отвергает).
+
+- [x] `applyEdits` strict-first → tolerant fallback с `\s+`-нормализацией (search split by `\s+`, segments escaped, joined with `\s+`); replace остаётся буквальным (заменяется matched slice оригинала)
+- [x] `ApplyResult.ok=true` теперь содержит `tolerantEdits: number[]` — индексы edits, прошедших только через fallback. Strict-only paths возвращают `[]`
+- [x] Tolerant требует уникального match (zero / ≥2 → abort с сообщением `ambiguous under whitespace-tolerant matching`)
+- [x] Whitespace-only search guard (`!/\S/.test(search)`) — отказ от паттернов без non-whitespace символов
+- [x] Regex metachar escape (`. * + ? ^ $ { } ( ) | [ ] \`) во всех сегментах
+- [x] `SafeWriter.execute` логирует `warn` с `tolerantEditIndices` когда сработал fallback — сигнал для run-файлов
+- [x] 9 новых unit-тестов в `edit-applier.test.ts` (20/20 в файле): minified one-line→multi-line, tabs↔spaces, regex metachars, ambiguity rejection, strict-wins-when-both-possible, replace verbatim, whitespace-only guard, mixed strict+tolerant — все покрыты
+- [x] Mock в orchestrator-тестах обновлён под новое поле — 205/205 общая зелёная
+
+**Бенчмарк-прогон 2026-04-28** (`qwen2.5-coder:32b-instruct`):
+- L1.1 clean: ✓ 10/10 commit (1 step, 1 файл)
+- L2.1 clean: ❌ 5.2/10, `commit_skipped` — model variance, забыл module augmentation для `request.start` (регрессия от 10/10 baseline 2026-04-27, не v1.24's fault)
+- L2.3 cumulative: ⚠️ 5.0/10, **partial commit** — 2 из 3 файлов закоммичены (types.ts + routes/users.ts), user-service.ts остался uncommitted на auto-branch
+- **Tolerant fallback ни разу не сработал за все 3 прогона** — failure modes были structural (paraphrased / hallucinated content), не whitespace minification. Conservative path сработал правильно — false-positive matches отсутствуют
+
+**Вывод:** v1.24 — insurance policy. Имплементирована корректно, юнит-тестами покрыта, не регрессирует strict path. На live-моделях этот failure mode не пробил, но цена нулевая. **Главный actionable** — silent partial completion на L2.3 повторно подтверждена → v1.28 повышается в приоритете.
 
 #### v1.25 — Repo-map в каждом промпте (~1-2 дня)
 - [ ] `RepoMapper` модуль: компактное представление структуры (`tree -L 3` + key signatures от AST)

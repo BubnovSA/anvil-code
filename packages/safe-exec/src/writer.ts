@@ -65,6 +65,16 @@ export class SafeWriter {
         fs.writeFileSync(resolved, applied.result, 'utf8');
         const result = this.diff.generate(original, applied.result, change.path);
         const changedLines = (result.diff.match(/^[+-]/gm) ?? []).length;
+        if (applied.tolerantEdits.length > 0) {
+          logger.warn(
+            {
+              path: change.path,
+              tolerantEditIndices: applied.tolerantEdits,
+              editCount: change.edits.length,
+            },
+            'Edits matched only via whitespace-tolerant fallback — model likely minified search blocks',
+          );
+        }
         logger.info(
           { path: change.path, action: 'modify', editCount: change.edits.length, changedLines },
           'File patched',
