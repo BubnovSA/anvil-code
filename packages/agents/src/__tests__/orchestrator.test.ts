@@ -215,4 +215,55 @@ describe('Orchestrator per-step recovery', () => {
       result: expect.stringContaining('Completed 1/2 steps'),
     }));
   });
+
+  // v1.25.1 — validation-loop Fixer's writer.execute throws (typically a
+  // hallucinated `search` block), the throw must NOT bubble up and crash the
+  // whole task. The validation loop should treat it as another failed attempt
+  // and either retry or fall through to commit_skipped on exhaustion.
+  it('does not crash the task when validation-Fixer write throws', async () => {
+    const { orch, store, writer } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'step a', dependencies: [] }],
+    });
+
+    // Force a typecheck failure so the validation loop actually runs Fixer.
+    // First call fails; subsequent calls pass to give the loop a way to exit
+    // cleanly if the Fixer write IS swallowed.
+    let typeCheckCalls = 0;
+    (orch as unknown as { typeChecker: { run: ReturnType<typeof vi.fn> } }).typeChecker = {
+      run: vi.fn(async () => {
+        typeCheckCalls++;
+        return typeCheckCalls === 1
+          ? { success: false, output: 'TS2304: Cannot find name X', exitCode: 2, durationMs: 5 }
+          : { success: false, output: 'TS2304: Cannot find name X', exitCode: 2, durationMs: 5 };
+      }),
+    };
+
+    // Validation Fixer returns a modify edit that the writer will reject.
+    (orch as unknown as { fixer: { execute: ReturnType<typeof vi.fn> } }).fixer = {
+      execute: vi.fn().mockResolvedValue({
+        files: [{ action: 'modify', path: 'foo.ts', edits: [{ search: 'NOT_PRESENT', replace: 'X' }] }],
+      }),
+    };
+
+    // First write is the initial Coder output (passes); subsequent writes
+    // come from the validation Fixer and must throw.
+    let writeCount = 0;
+    writer.execute.mockImplementation(() => {
+      writeCount++;
+      if (writeCount === 1) return; // Coder's create succeeds
+      throw new Error('SafeWriter.execute: edit-apply failed for foo.ts: edit #1: search string not found');
+    });
+
+    // The bug being fixed: previously this rejected; now it should resolve and
+    // the task should be saved as completed (with commit_skipped semantics).
+    await expect(orch.runTask('task-validation-throw', 'tricky')).resolves.toBeUndefined();
+
+    expect(store.saveTask).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'completed',
+    }));
+    // The Fixer write throw should have been seen by the loop; saveFailure
+    // gets a 'validation-failure' entry once the retry budget is exhausted.
+    const failureKeys = store.saveFailure.mock.calls.map(c => c[0] as string);
+    expect(failureKeys.some(k => k.startsWith('validation-failure:'))).toBe(true);
+  });
 });

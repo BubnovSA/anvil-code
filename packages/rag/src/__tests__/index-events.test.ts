@@ -152,4 +152,47 @@ describe('GraphRetriever.indexCodebase progress events', () => {
       cap.off();
     }
   });
+
+  // v1.25.2 — when a previously-indexed file disappears from disk (e.g.
+  // `git reset --hard`, manual delete), the next reindex must drop its
+  // symbols from the graph. Otherwise repo-map and RAG keep advertising
+  // ghosts and patch-based edits fail with "search not found".
+  it('prunes graph entries for files that vanished between reindexes', async () => {
+    writeFiles(3); // f0.ts, f1.ts, f2.ts
+
+    const hashes = new Map<string, string>();
+    const store = {
+      getFileHash: (p: string) => hashes.get(p),
+      saveFileHash: (p: string, h: string) => { hashes.set(p, h); },
+      deleteFileHash: (p: string) => { hashes.delete(p); },
+      getCachedEmbedding: () => undefined,
+      saveCachedEmbedding: () => undefined,
+    };
+
+    const retriever = new GraphRetriever(store);
+
+    // First pass populates the graph with all 3 files.
+    await retriever.indexCodebase(tmpDir, { indexId: 'idx-prune-1' });
+    expect(retriever.graph.getAll().length).toBe(3);
+
+    // Simulate `git reset --hard` deleting one file.
+    fs.unlinkSync(path.join(tmpDir, 'f1.ts'));
+
+    // Second pass — must drop f1's symbol AND report `pruned` in index_done.
+    const indexId = 'idx-prune-2';
+    const cap = captureEvents(`task:${indexId}`);
+    try {
+      await retriever.indexCodebase(tmpDir, { indexId });
+      const remaining = retriever.graph.getAll().map(s => path.basename(s.filePath));
+      expect(remaining.sort()).toEqual(['f0.ts', 'f2.ts']);
+
+      const done = cap.all.find(e => e.type === 'index_done')!;
+      expect((done.data as { pruned: number }).pruned).toBe(1);
+      // The vanished file's hash must also be cleaned up so a future
+      // re-creation triggers fresh indexing rather than a stale skip.
+      expect(hashes.has(path.join(tmpDir, 'f1.ts'))).toBe(false);
+    } finally {
+      cap.off();
+    }
+  });
 });

@@ -641,12 +641,27 @@ export class Orchestrator {
 
       // Re-write fixed files and update tracking. Dedupe so the Fixer's
       // multiple edits to one file collapse into a single atomic apply.
+      //
+      // A throw from `writer.execute` (typically "search not found" on a
+      // hallucinated edit block) must NOT crash the task — it just means this
+      // particular Fixer attempt didn't produce an applicable patch. The
+      // outer loop will either retry (if budget remains) or fall through to
+      // commit_skipped, giving the operator a recoverable state with the
+      // working tree intact.
       const dedupedFix = dedupeChangesByPath(fixResult.files);
       for (const fixed of dedupedFix) {
-        this.writer.execute(fixed);
-        const idx = allFileChanges.findIndex(f => f.path === fixed.path);
-        if (idx >= 0) allFileChanges[idx] = fixed;
-        else allFileChanges.push(fixed);
+        try {
+          this.writer.execute(fixed);
+          const idx = allFileChanges.findIndex(f => f.path === fixed.path);
+          if (idx >= 0) allFileChanges[idx] = fixed;
+          else allFileChanges.push(fixed);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn(
+            { path: fixed.path, attempt, error: msg },
+            'Validation-Fixer write failed; treating as another validation issue and continuing',
+          );
+        }
       }
 
       this.store.saveADR({

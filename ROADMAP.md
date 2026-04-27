@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.25 — repo-map в каждом промпте; 215/215 unit-тестов; **L2.3 cumulative впервые landed GREEN 9.2/10** (см. `docs/benchmarks/runs/2026-04-28-v1.25-repo-map.md`)  
+**Статус проекта**: 🟢 v1.25.2 — repo-map + orchestrator/reindex hardening; 217/217 unit-тестов; **L2.3 cumulative впервые landed GREEN 9.2/10** (см. `docs/benchmarks/runs/2026-04-28-v1.25-repo-map.md`)  
 **Последнее обновление**: 2026-04-28  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -517,15 +517,16 @@ node packages/api/dist/index.js
 
 **Surfaced two pre-existing orchestrator bugs** (не v1.25 регрессии — добавлены как v1.25.1/v1.25.2 ниже).
 
-#### v1.25.1 — Validation-Fixer write throws не должны крашить task (~30 минут)
-- [ ] Wrap `this.writer.execute(fixed)` в [orchestrator.ts:622](packages/agents/src/orchestrator.ts#L622) в try/catch — на throw логировать как validation issue и продолжать loop, не крашить task
-- [ ] Тест: validation Fixer возвращает edit с unmatched search → task завершается с `commit_skipped`, не `status: failed`
-- [ ] **Атакует:** uncaught throw из L2.3 #2 на v1.25 — валидаторский Fixer fail обрушил всю задачу. В v1.24 не проявилось случайно (Fixer's edits тогда матчили).
+#### v1.25.1 — Validation-Fixer write throws не крашат task (✅ реализовано)
+- [x] Wrap `this.writer.execute(fixed)` в `runValidationLoop` ([orchestrator.ts](packages/agents/src/orchestrator.ts)) в try/catch — на throw логируем `'Validation-Fixer write failed; treating as another validation issue and continuing'` и продолжаем loop. Outer цикл либо ретрайт (если budget есть), либо fall-through на `commit_skipped` — working tree остаётся в auto-branch для inspection
+- [x] Новый тест в `orchestrator.test.ts` (8/8 в файле): TypeChecker фейлится → Fixer возвращает edit с unmatched search → writer.execute throws → task завершается со `status: 'completed'` (не падает); `validation-failure:*` запись в saveFailure фиксируется
+- **Атаковал:** uncaught throw из L2.3 #2 на v1.25 — валидаторский Fixer fail обрушал всю задачу со `status: 'failed'`. В v1.24 не проявлялось случайно (Fixer's edits тогда применялись успешно).
 
-#### v1.25.2 — Reindex должен пруниться по deleted files (~1 час)
-- [ ] `indexCodebase` после glob diff'ает discovered set против `file_hashes` table — для отсутствующих on-disk файлов вызывает `graph.removeFile()` + удаляет из vectorStore
-- [ ] Тест: после `git reset` файла, который был в графе → reindex прунит его символы
-- [ ] **Атакует:** "ghost files" в repo-map после `git reset --hard`. Surfaced когда L2.1 #1 на v1.25 silently не создал middleware потому что repo-map утверждал что он уже есть (от прошлого прогона).
+#### v1.25.2 — Reindex прунит graph по deleted files (✅ реализовано)
+- [x] `indexCodebase` ([graph-retriever.ts](packages/rag/src/graph-retriever.ts)) после glob строит `discovered = new Set(files)` и для каждого пути в `codeGraph.getAll().map(s => s.filePath)` НЕ присутствующего в discovered — вызывает `removeFile(known)` (удаляет символы из графа + векторы из VectorStore + file_hash из MemoryStore)
+- [x] `index_done` event и финальный logger.info теперь содержат поле `pruned: number`; message добавляет `, pruned N` если pruned > 0
+- [x] Новый тест в `index-events.test.ts` (6/6): индексируем 3 файла → удаляем один с диска → reindex прунит, граф содержит 2 символа, `index_done.data.pruned === 1`, file_hash удалённого файла очищен
+- **Атаковал:** "ghost files" в repo-map после `git reset --hard`. На v1.25 surfaced когда L2.1 #1 на свежем reset тихо не создал middleware — repo-map утверждал что requestLogMiddleware уже есть (stale от прошлого прогона), модель просто зарегистрировала его в server.ts → typecheck fail.
 
 #### v1.26 — Few-shot examples в Coder/Fixer (~1 день)
 - [ ] 2-3 worked examples в каждом system prompt (input → правильный output)

@@ -178,6 +178,25 @@ export class GraphRetriever {
       files.push(...found);
     }
 
+    // Prune graph entries for files that no longer exist on disk. The glob
+    // above is the ground truth for "what is currently here"; anything in the
+    // graph but missing from the discovered set was deleted out-of-band (e.g.
+    // `git reset --hard`, manual `rm`). Without this step, repo-map and RAG
+    // keep advertising symbols from vanished files — agents then reference
+    // ghost methods/files and patches fail with "search not found".
+    const discovered = new Set(files);
+    const knownPaths = new Set(this.codeGraph.getAll().map(s => s.filePath));
+    let pruned = 0;
+    for (const known of knownPaths) {
+      if (!discovered.has(known)) {
+        await this.removeFile(known);
+        pruned++;
+      }
+    }
+    if (pruned > 0) {
+      logger.info({ indexId, pruned }, 'Pruned vanished files from index');
+    }
+
     let indexed = 0;
     let skipped = 0;
     let processed = 0;
@@ -251,13 +270,13 @@ export class GraphRetriever {
     await this.codeGraph.saveToDisk();
 
     const durationMs = Date.now() - startedAt;
-    logger.info({ indexId, indexed, skipped, vectors: this.vectorStore.size, durationMs }, 'Codebase indexed');
+    logger.info({ indexId, indexed, skipped, pruned, vectors: this.vectorStore.size, durationMs }, 'Codebase indexed');
 
     taskEvents.emitEvent({
       taskId: indexId,
       type: 'index_done',
-      message: `Indexed ${indexed} file(s), skipped ${skipped}`,
-      data: { indexed, skipped, totalFiles: files.length, vectors: this.vectorStore.size, durationMs },
+      message: `Indexed ${indexed} file(s), skipped ${skipped}${pruned > 0 ? `, pruned ${pruned}` : ''}`,
+      data: { indexed, skipped, pruned, totalFiles: files.length, vectors: this.vectorStore.size, durationMs },
     });
 
     return indexId;
