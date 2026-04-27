@@ -80,6 +80,39 @@ export class ASTParser {
           endLine: endLine + 1,
           text: node.getText(sourceFile).slice(0, 400),
         });
+      } else if (ts.isVariableStatement(node)) {
+        // Top-level `export const X = ...` with a meaningful initializer:
+        // object literal (e.g. service singleton with methods), arrow/function
+        // expression, or call expression (e.g. zod schema, factory). Plain
+        // primitive constants are skipped — they offer no callable API.
+        const isExported = node.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword);
+        if (!isExported) {
+          ts.forEachChild(node, visit);
+          return;
+        }
+        for (const decl of node.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name)) continue;
+          const init = decl.initializer;
+          if (!init) continue;
+          const isMeaningful =
+            ts.isObjectLiteralExpression(init) ||
+            ts.isArrowFunction(init) ||
+            ts.isFunctionExpression(init) ||
+            ts.isCallExpression(init) ||
+            ts.isClassExpression(init);
+          if (!isMeaningful) continue;
+
+          const { line: startLine } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+          const { line: endLine } = sourceFile.getLineAndCharacterOfPosition(node.getEnd());
+          symbols.push({
+            name: decl.name.text,
+            kind: 'variable',
+            filePath,
+            startLine: startLine + 1,
+            endLine: endLine + 1,
+            text: node.getText(sourceFile).slice(0, 800),
+          });
+        }
       }
 
       ts.forEachChild(node, visit);

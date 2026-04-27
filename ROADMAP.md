@@ -2,8 +2,8 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.21 — working baseline для атомарных задач (две e2e-задачи прошли green-commit на deepseek-coder-v2:16b)  
-**Последнее обновление**: 2026-04-26  
+**Статус проекта**: 🟢 v1.23 — patch-based editing работает; L1-L2 (clean) на qwen2.5-coder:32b — green commit, cumulative ограничен (см. docs/benchmarks/)  
+**Последнее обновление**: 2026-04-27  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
 ---
@@ -372,8 +372,149 @@ node packages/api/dist/index.js
 
 **Известные ограничения:**
 - ⚠️ TesterAgent на `deepseek-coder-v2:16b` упорно генерирует jest-style моки (`as jest.Mock`) вопреки explicit vitest examples в промпте — модель не удерживает multi-rule инструкции для tests; обход = `TESTER_ENABLED=false`
-- ⚠️ Cross-step consistency не проверена — текущий baseline = `PLANNER_MAX_STEPS=1`; для многошаговых задач (3+ файла, разные подсистемы) нужна v1.22 (передача "newly created files" между шагами)
+- ⚠️ Cross-step consistency решена частично в v1.22 (см. ниже)
 - ⚠️ Validation ловит только typecheck+unit-tests, не runtime smoke (стёртый `app.listen()` прошёл validation в одном из прогонов)
+
+### Cross-step consistency & prompt hardening v1.22 (✅ реализовано)
+
+**Цель:** многошаговые задачи (2+ шагов на одном или связанных файлах) не должны разрушать работу соседних шагов.
+
+**v1.22 — Cross-step state propagation:**
+- [x] `executeStep` принимает snapshot `previousChanges: FileChange[]` от уже выполненных шагов
+- [x] `buildPromptContext` поддерживает поле `newlySources: Array<{path, content}>` — новый блок "Recently modified by previous steps (CURRENT state — SUPERSEDES Existing project files)" с маркерами `===== BEGIN MODIFIED / END MODIFIED =====`
+- [x] Coder/Fixer prompts усилены правилом 2a / 1a: "Recently modified" блок имеет приоритет над disk-version
+- [x] Dedupe: если файл и в newlySources и в ragFilePaths — disk-version не показывается, чтобы не сбивать модель
+- [x] Fixer в validation loop тоже получает full source через newlySources всех `allFileChanges` — может видеть импорты при патче
+
+**v1.22.1 — Same-file sequential planning:**
+- [x] Planner system prompt rule 6: "If two steps modify the SAME file, the second's `dependencies` MUST include the first's id" — даёт scheduler'у linearize одного-файловых правок
+- [x] `PLANNER_MAX_STEPS` ENV (default 50) — Orchestrator усекает план с очисткой dangling deps; для smoke-тестов можно ставить =1
+
+**v1.22.2 — `const` exports indexing:**
+- [x] AST-парсер ([code-graph/src/parser.ts:83-115](packages/code-graph/src/parser.ts#L83-L115)) теперь индексирует `export const X = {...}` (object literal, arrow, function expression, call expression, class expression) — раньше пропускал
+- [x] `UserService = { ... }` style сервисы попадают в RAG, Coder видит реальный API, не галлюцинирует методы
+
+**v1.22.3 — Coder/Fixer/Tester prompt hardening:**
+- [x] Правила 9-13 в Coder prompt: entry-point preservation (Fastify init / app.listen / env vars), no `require()` in ESM, no placeholder comments, file extension rule (`.ts` source / `.js` import suffix), Fastify quick reference (hook signatures, real type exports, `reply.elapsedTime`)
+- [x] Planner rule 6a: Cross-file coupled changes (create + register) MUST be a single step — наименее склонно к рассинхронизации
+- [x] Tester explicit vitest mocking guide (vi.fn, vi.spyOn, запрет `as jest.Mock`)
+
+**Эмпирические findings (тестирование на sandbox-проекте):**
+
+| Задача | `deepseek-coder-v2:16b` | `gemma2:27b` |
+|--------|--------------------------|----------------|
+| L1 атомарные (1 файл) | ✓ stable, 8-10/10 | (не отдельно тестировано) |
+| L2.1 cross-file middleware (2 файла) | ❌ 5 попыток, систематически разрушал `server.ts` | ✓ 1 попытка, 7-8/10 |
+| L2.2 refactor (extract schema) | n/a | ⚠️ 70% (semantic miss — `nullable()` вместо required) |
+| L2.3 multi-file feature (3 файла, чистый main) | n/a | ✓ 8/10 green commit |
+| L3.1 class refactor | n/a | **✓ 10/10 perfect** |
+| L2.3 на расширенном sandbox (после L3.1 merge) | n/a | ❌ регрессия 5/10 — `UserService.users` галлюцинация |
+
+**Ключевой вывод:**
+- **Размер модели важнее prompt-engineering.** 14+ rules в Coder prompt'е не вытащили `deepseek-coder-v2:16b` на L2; gemma2:27b делает с первой попытки на той же базе.
+- **Cumulative state деградирует gemma2:27b.** На чистом main стабильно. На накопленном проекте — галлюцинирует методы, пишет несуществующие property accesses.
+- **Реалистичный позиционинг:** atomic-задачи на свежем коде (L1-L2 на clean state). Cumulative growth требует архитектурных изменений.
+
+**Архитектурное ограничение:** Coder выводит **полный текст файла** (`{path, content, action}`), что физически позволяет стереть существующий код. Никакие промпты ("preserve existing imports") этого не лечат. Решение — переход на patch/diff-based editing (см. v1.23 ниже).
+
+**Конфигурация v1.22 в `.env`:**
+- `COMMIT_ONLY_IF_VALID=true` — main защищён от broken validation commits
+- `TESTER_ENABLED=false` — отключение шумного Tester (известное ограничение модели)
+- `PLANNER_MAX_STEPS=50` — практический cap
+- `OLLAMA_MODEL_LARGE=gemma2:27b` — рекомендуемая модель для LARGE (architect/coder/fixer)
+
+### Patch-based code editing v1.23 (✅ реализовано)
+
+**Корневая проблема всех L2-провалов до v1.23:** Coder выводил файл целиком, что физически позволяло стирать существующий код. Никакие prompt rules не лечили этот класс.
+
+**Реализация — search/replace blocks (паттерн Aider):**
+- [x] `FileChange` в `shared/src/types/index.ts` — discriminated union: `create | modify | delete`. Для `modify` — массив `edits: Array<{search, replace}>`, нет `content`.
+- [x] `applyEdits()` в [safe-exec/src/edit-applier.ts](packages/safe-exec/src/edit-applier.ts) — точный match (zero и multiple matches abort), edits применяются по порядку, atomic (либо все, либо ни одного)
+- [x] `SafeWriter.execute` switches on action; для modify читает диск, применяет edits, пишет результат
+- [x] Coder/Fixer system prompts полностью переписаны под edit-block format (~14 правил, включая Fastify cheat sheet, .ts/.js suffix rule, no placeholder comments)
+- [x] Tester schema ограничен `action: 'create'` (он только создаёт новые тестовые файлы)
+- [x] `partial-json` updated для streaming union schema; новый `partialFileSize()` helper
+- [x] **v1.23.1** — entry-point файлы (`server.ts/main.ts/...`) всегда включаются в `ragFilePaths`. Без этого Coder не видел реальный server.ts через RAG (vector search не находил — у него нет собственных символов) и галлюцинировал search блоки.
+- [x] **v1.23.2** — `dedupeChangesByPath` в Orchestrator перед записью. Если несколько `modify` на один path — edits сливаются в одно atomic apply. Иначе первый batch применялся, второй fail'ил → partial damage.
+- [x] **v1.23.3** — retry-with-real-content. Когда applyEdits fails (search not found), Fixer вызывается ОДИН раз с literal current content файла как `<<<<<<< CURRENT FILE\n...\n>>>>>>> END`. Iterative editing pattern из Aider.
+- [x] 196 unit-тестов зелёные после миграции; 10 новых тестов для applyEdits edge cases
+
+**Эмпирические результаты (детально — `docs/benchmarks/runs/2026-04-27-v1.21-v1.23-multi-model.md`):**
+
+| Задача | deepseek-coder-v2:16b | gemma2:27b | qwen2.5-coder:32b |
+|--------|----------------------|------------|---------------------|
+| L1 atomic | ✓ stable | — | — |
+| L2.1 cross-file (clean) | ❌ 5 попыток, разрушал server.ts | ✓ 7-8/10 | ✓ **10/10 GREEN** |
+| L2.3 multi-file (clean) | — | ✓ 8/10 | — |
+| L3.1 class refactor (clean) | — | ✓ **10/10** | — |
+| L2 на cumulative state | — | ❌ регрессия | ❌ регрессия (search minification) |
+
+**Ключевые findings:**
+- **Размер модели > промпт-инжиниринг.** 14+ правил не вытащили deepseek-coder-v2:16b на L2; gemma2:27b делает с первого раза.
+- **Patch-based — главный safety win.** Файл никогда не разрушается, даже при неверном edit. main защищён.
+- **Cumulative state — фундаментальное ограничение** локальных моделей. Не лечится правилами. Видимо нужен Direction 2 (repo-map).
+- **Новый failure mode на patch-based:** qwen-coder:32b "минифицирует" многострочный код в search блоках в одну строку → strict match fail. Retry с real content тоже срывается (Fixer эмитит empty search → Zod fail).
+- **Silent partial completes:** L2.2 cumulative — schema создалась, integration не записалась, task report'ит `done`. Нужен `commit_partial` event.
+
+**Известные ограничения после v1.23:**
+- ⚠️ Cumulative state нестабилен на любой из 3 моделей
+- ⚠️ Search minification на qwen2.5-coder:32b — нужен whitespace-tolerant fallback в applyEdits
+- ⚠️ Silent partial failures не сигнализируются — task report'ит `done` при частичном успехе
+- ⚠️ TesterAgent на vitest проектах упорно пишет jest-моки — обход `TESTER_ENABLED=false`
+
+### Phase 2 — продолжение (📋 планируется)
+
+После v1.23 систематические улучшения. Каждое — отдельная итерация с полным regression run в `docs/benchmarks/runs/`. После всех — сравнительный анализ.
+
+#### v1.24 — Whitespace-tolerant edit matching (~4 часа)
+- [ ] `applyEdits` fallback: если strict match fail — попробовать с `\s+` → ` ` нормализацией
+- [ ] Точный диагностический message при tolerant match (логировать когда был использован)
+- [ ] Тесты: minified one-line search, mixed indentation, trailing whitespace
+- [ ] **Атакует:** новый failure mode v1.23 — search minification
+
+#### v1.25 — Repo-map в каждом промпте (~1-2 дня)
+- [ ] `RepoMapper` модуль: компактное представление структуры (`tree -L 3` + key signatures от AST)
+- [ ] Включается в `buildPromptContext` перед "Existing project files"
+- [ ] Token budget — лимит размера, чтобы не раздувать prompt
+- [ ] **Атакует:** галлюцинации "несуществующих методов / файлов", главная гипотеза для cumulative regression
+
+#### v1.26 — Few-shot examples в Coder/Fixer (~1 день)
+- [ ] 2-3 worked examples в каждом system prompt (input → правильный output)
+- [ ] Локальные модели лучше следуют примерам, чем абстрактным rules
+- [ ] **Атакует:** semantic misses типа `nullable()` вместо required
+
+#### v1.27 — Per-agent context tailoring (~1 день)
+- [ ] Reviewer получает diff, не full files
+- [ ] Planner получает tree + signatures, не full source
+- [ ] Architect видит step description + conventions only
+- [ ] Coder/Fixer/Tester — как сейчас (full context)
+- [ ] **Атакует:** прожорливость промптов, ускоряет каждый шаг на 30-50%
+
+#### v1.28 — Silent failure events (~3 часа)
+- [ ] `commit_partial` SSE event при retry-with-feedback fail хотя бы для одного файла
+- [ ] Расширить `done` event с полем `incomplete_files: string[]`
+- [ ] **Атакует:** UX issue из L2.2 — пользователь не знает что задача половинчатая
+
+### Phase 3 — Architecture (📋 после Phase 2)
+
+#### v1.30+ — Tool-calling Coder
+- Заменить JSON output на tool-calling: `read_file()`, `replace_in_file()`, `run_test()`
+- Архитектурное решение для класса destruction'ов (модель не "пишет файл", а вызывает операции)
+- Большая переделка (~3-5 дней)
+
+#### v1.31+ — Sub-agents
+- `BugFixAgent`, `RefactorAgent`, `FeatureAgent` — специализированные роли
+- Planner выбирает кого вызвать вместо unified Coder
+
+#### v1.32+ — Iterative editing с reflection
+- Coder в цикле read → edit → verify → adjust
+- Self-critique перед отправкой Reviewer'у
+
+### Phase 4 — Storage upgrade (📋)
+
+- [ ] Qdrant вместо HNSW JSON (production vector DB, hybrid search, payload filter)
+- [ ] Symbol table в SQLite вместо CodeGraph JSON Map (быстрые SQL queries)
+- [ ] Speculative decoding (Ollama draft models — 2-3x ускорение)
 
 ### MCP проекты v1.16 (✅ реализовано)
 - [x] MCP server использует тот же `ProjectRegistry`+`ProjectManager`, что и API (общий `data/projects.db`)

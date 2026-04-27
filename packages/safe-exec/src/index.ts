@@ -3,4 +3,6 @@ export { BackupManager } from './backup.js';
 export { DiffEngine } from './diff-engine.js';
 export { TestRunner } from './test-runner.js';
 export { TypeChecker } from './type-checker.js';
+export { applyEdits } from './edit-applier.js';
 export type { ValidationResult } from './test-runner.js';
+export type { ApplyResult } from './edit-applier.js';

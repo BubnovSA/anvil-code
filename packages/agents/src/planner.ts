@@ -35,6 +35,23 @@ Rules — STEP COUNT IS THE MOST IMPORTANT:
    names, and specifications the Coder needs. Don't say "add the endpoint" — say
    "In src/routes/users.ts, add app.get('/health', async () => ({ status: 'ok' }))
    inside the existing usersRoutes function".
+6. SAME-FILE STEPS MUST BE SEQUENTIAL. If two or more steps modify the SAME file,
+   each subsequent step's "dependencies" array MUST include the previous step's id.
+   Concurrent edits to one file silently overwrite each other — last writer wins,
+   first writer's changes are LOST. Example: if step1 and step2 both edit
+   src/routes/users.ts, step2 must have "dependencies": ["step1"].
+   When in doubt, prefer combining same-file edits into ONE step (rule 1).
+6a. CROSS-FILE COUPLED CHANGES MUST BE A SINGLE STEP. When a single feature requires
+    creating one file AND wiring it up in another (e.g. "create middleware AND register
+    it in server.ts", "create schema AND import it in route", "create service AND use
+    it in handler"), output exactly ONE step that names BOTH files and what to do in
+    each. Splitting a tightly-coupled pair into two steps causes inconsistency: the
+    register-step Coder may not see the exact name/signature of what the create-step
+    just produced. Example description for ONE step:
+    "Create src/middleware/foo.ts exporting fooPlugin(app), AND in src/server.ts add
+    the import statement (import fooPlugin from ./middleware/foo.js) plus the call
+    fooPlugin(app) after the Fastify init. Preserve all existing imports, registrations,
+    and the listen call."
 
 Output ONLY valid JSON matching this schema: { "steps": [{ "id": "step1", "description": "...", "dependencies": [] }] }`;
 

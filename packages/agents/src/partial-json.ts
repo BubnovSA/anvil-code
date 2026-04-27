@@ -10,11 +10,18 @@
  * the depth counter.
  */
 
-export interface PartialFile {
-  path: string;
-  content: string;
-  action: 'create' | 'modify' | 'delete';
-}
+/**
+ * Streaming view of a Coder/Fixer file change. Mirrors the schema in
+ * `coder.ts` (FileChangeSchema) but loosened to what we can extract before the
+ * full output is parsed. Discriminated by `action`:
+ * - create: full content available
+ * - modify: list of search/replace edits
+ * - delete: just a path
+ */
+export type PartialFile =
+  | { action: 'create'; path: string; content: string }
+  | { action: 'modify'; path: string; edits: Array<{ search: string; replace: string }> }
+  | { action: 'delete'; path: string };
 
 interface ScannerState {
   buf: string;
@@ -121,9 +128,27 @@ function nextObject(state: ScannerState): string | null {
 function isPartialFile(value: unknown): value is PartialFile {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
-  return typeof v.path === 'string' && v.path.length > 0
-    && typeof v.content === 'string'
-    && (v.action === 'create' || v.action === 'modify' || v.action === 'delete');
+  if (typeof v.path !== 'string' || v.path.length === 0) return false;
+  if (v.action === 'create') return typeof v.content === 'string';
+  if (v.action === 'modify') {
+    if (!Array.isArray(v.edits) || v.edits.length === 0) return false;
+    return v.edits.every(e =>
+      e !== null && typeof e === 'object'
+        && typeof (e as Record<string, unknown>).search === 'string'
+        && typeof (e as Record<string, unknown>).replace === 'string',
+    );
+  }
+  if (v.action === 'delete') return true;
+  return false;
+}
+
+/** Approximate "size" of a partial file for UI display in coder_file_ready. */
+export function partialFileSize(file: PartialFile): number {
+  switch (file.action) {
+    case 'create': return file.content.length;
+    case 'modify': return file.edits.reduce((s, e) => s + e.replace.length, 0);
+    case 'delete': return 0;
+  }
 }
 
 /**

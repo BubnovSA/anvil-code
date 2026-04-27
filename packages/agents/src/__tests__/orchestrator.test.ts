@@ -15,9 +15,13 @@ vi.mock('@rag-system/shared', async () => {
 });
 
 vi.mock('@rag-system/safe-exec', () => ({
-  SafeWriter: class { execute = vi.fn(); },
+  SafeWriter: class {
+    execute = vi.fn();
+    get root() { return '/tmp'; }
+  },
   TestRunner: class { run = vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'mock' }); },
   TypeChecker: class { run = vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'mock' }); },
+  applyEdits: vi.fn((content: string) => ({ ok: true, result: content })),
 }));
 
 const { Orchestrator } = await import('../orchestrator.js');
@@ -41,8 +45,11 @@ function buildOrchestrator(opts: {
   };
 
   const router = {};
-  const retriever = { retrieveContext: vi.fn().mockResolvedValue('') };
-  const writer = { execute: vi.fn() };
+  const retriever = {
+    retrieveContext: vi.fn().mockResolvedValue(''),
+    retrieveContextItems: vi.fn().mockResolvedValue([]),
+  };
+  const writer = { execute: vi.fn(), root: '/tmp' };
   const git = {
     createBranchForTask: vi.fn().mockResolvedValue(undefined),
     commitChanges: vi.fn().mockResolvedValue(undefined),
@@ -79,7 +86,7 @@ function buildOrchestrator(opts: {
     }),
   };
   (orch as unknown as { coder: { execute: ReturnType<typeof vi.fn> } }).coder = {
-    execute: vi.fn().mockResolvedValue({ files: [{ path: 'foo.ts', content: 'x', action: 'create' }] }),
+    execute: vi.fn().mockResolvedValue({ files: [{ action: 'create', path: 'foo.ts', content: 'x' }] }),
   };
   (orch as unknown as { tester: { execute: ReturnType<typeof vi.fn> } }).tester = {
     execute: vi.fn().mockResolvedValue({ testFiles: [] }),

@@ -38,10 +38,30 @@ describe('PlanOutputSchema', () => {
 // ── CoderOutputSchema ────────────────────────────────────────────────────────
 
 describe('CoderOutputSchema', () => {
-  it('accepts valid file changes', () => {
+  it('accepts a valid create change', () => {
     expect(() =>
       CoderOutputSchema.parse({
-        files: [{ path: 'src/foo.ts', content: 'export {}', action: 'create' }],
+        files: [{ action: 'create', path: 'src/foo.ts', content: 'export {}' }],
+      })
+    ).not.toThrow();
+  });
+
+  it('accepts a valid modify change with edits', () => {
+    expect(() =>
+      CoderOutputSchema.parse({
+        files: [{
+          action: 'modify',
+          path: 'src/bar.ts',
+          edits: [{ search: 'foo', replace: 'bar' }],
+        }],
+      })
+    ).not.toThrow();
+  });
+
+  it('accepts a valid delete change (no extra fields needed)', () => {
+    expect(() =>
+      CoderOutputSchema.parse({
+        files: [{ action: 'delete', path: 'src/old.ts' }],
       })
     ).not.toThrow();
   });
@@ -53,7 +73,7 @@ describe('CoderOutputSchema', () => {
   it('rejects invalid action', () => {
     expect(() =>
       CoderOutputSchema.parse({
-        files: [{ path: 'src/foo.ts', content: '', action: 'write' }],
+        files: [{ action: 'write', path: 'src/foo.ts', content: '' }],
       })
     ).toThrow();
   });
@@ -61,7 +81,35 @@ describe('CoderOutputSchema', () => {
   it('rejects empty path', () => {
     expect(() =>
       CoderOutputSchema.parse({
-        files: [{ path: '', content: '', action: 'create' }],
+        files: [{ action: 'create', path: '', content: '' }],
+      })
+    ).toThrow();
+  });
+
+  it('rejects modify without edits', () => {
+    expect(() =>
+      CoderOutputSchema.parse({
+        files: [{ action: 'modify', path: 'src/x.ts' }],
+      })
+    ).toThrow();
+  });
+
+  it('rejects modify with empty edits array', () => {
+    expect(() =>
+      CoderOutputSchema.parse({
+        files: [{ action: 'modify', path: 'src/x.ts', edits: [] }],
+      })
+    ).toThrow();
+  });
+
+  it('rejects modify with empty search string', () => {
+    expect(() =>
+      CoderOutputSchema.parse({
+        files: [{
+          action: 'modify',
+          path: 'src/x.ts',
+          edits: [{ search: '', replace: 'y' }],
+        }],
       })
     ).toThrow();
   });
@@ -90,12 +138,20 @@ describe('ArchitectOutputSchema', () => {
 // ── TesterOutputSchema ───────────────────────────────────────────────────────
 
 describe('TesterOutputSchema', () => {
-  it('accepts valid test files', () => {
+  it('accepts valid test files (create only)', () => {
     expect(() =>
       TesterOutputSchema.parse({
-        testFiles: [{ path: 'src/__tests__/foo.test.ts', content: 'describe()', action: 'create' }],
+        testFiles: [{ action: 'create', path: 'src/__tests__/foo.test.ts', content: 'describe()' }],
       })
     ).not.toThrow();
+  });
+
+  it('rejects modify action — Tester only creates new test files', () => {
+    expect(() =>
+      TesterOutputSchema.parse({
+        testFiles: [{ action: 'modify', path: 'src/__tests__/foo.test.ts', edits: [{ search: 'a', replace: 'b' }] }],
+      })
+    ).toThrow();
   });
 
   it('accepts empty testFiles array', () => {
@@ -132,10 +188,22 @@ describe('ReviewerOutputSchema', () => {
 // ── FixerOutputSchema ────────────────────────────────────────────────────────
 
 describe('FixerOutputSchema', () => {
-  it('accepts valid fixed files', () => {
+  it('accepts a fixed file with edits', () => {
     expect(() =>
       FixerOutputSchema.parse({
-        files: [{ path: 'src/foo.ts', content: '// fixed', action: 'modify' }],
+        files: [{
+          action: 'modify',
+          path: 'src/foo.ts',
+          edits: [{ search: 'broken', replace: 'fixed' }],
+        }],
+      })
+    ).not.toThrow();
+  });
+
+  it('accepts a newly created helper file', () => {
+    expect(() =>
+      FixerOutputSchema.parse({
+        files: [{ action: 'create', path: 'src/helper.ts', content: 'export {};' }],
       })
     ).not.toThrow();
   });

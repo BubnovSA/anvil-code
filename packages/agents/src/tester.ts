@@ -1,10 +1,18 @@
 import { z } from 'zod';
 import { BaseAgent } from './base-agent.js';
 import type { ModelRole, TaskMode, FileChange } from '@rag-system/shared';
-import { FileChangeSchema } from './coder.js';
+
+// Tester only ever produces brand-new test files — never edits existing source.
+// Restricting the schema to `action: 'create'` keeps the shape simple for the
+// model and rejects accidental modify/delete responses up front.
+const TesterTestFileSchema = z.object({
+  action: z.literal('create'),
+  path: z.string().min(1),
+  content: z.string(),
+});
 
 export const TesterOutputSchema = z.object({
-  testFiles: z.array(FileChangeSchema),
+  testFiles: z.array(TesterTestFileSchema),
 });
 
 export type TesterOutput = z.infer<typeof TesterOutputSchema>;
@@ -46,9 +54,22 @@ Output ONLY valid JSON:
 { "testFiles": [{ "path": "src/__tests__/foo.test.ts", "content": "...", "action": "create" }] }`;
 
   async execute(files: FileChange[], context: string, taskMode: TaskMode): Promise<TesterOutput> {
-    const filesSummary = files.map(f => `${f.action}: ${f.path}\n${f.content}`).join('\n---\n');
+    const filesSummary = files.map(formatChangeForTester).join('\n---\n');
     const prompt = `Files changed:\n${filesSummary}\n\nContext:\n${context}\n\nGenerate unit tests JSON.`;
     const response = await this.callLLM(prompt, taskMode, true);
     return this.parseAndValidate(response, TesterOutputSchema);
+  }
+}
+
+function formatChangeForTester(c: FileChange): string {
+  switch (c.action) {
+    case 'create':
+      return `${c.action}: ${c.path}\n${c.content}`;
+    case 'modify':
+      return `${c.action}: ${c.path}\n${c.edits
+        .map((e, i) => `[edit ${i + 1}] SEARCH:\n${e.search}\nREPLACE:\n${e.replace}`)
+        .join('\n')}`;
+    case 'delete':
+      return `${c.action}: ${c.path}`;
   }
 }

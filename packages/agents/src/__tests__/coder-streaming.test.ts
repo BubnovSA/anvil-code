@@ -22,8 +22,8 @@ describe('CoderAgent streaming', () => {
   it('invokes onFileReady for each file as soon as its object closes', async () => {
     const payload = JSON.stringify({
       files: [
-        { path: 'a.ts', content: 'A', action: 'create' },
-        { path: 'b.ts', content: 'B', action: 'modify' },
+        { action: 'create', path: 'a.ts', content: 'A' },
+        { action: 'modify', path: 'b.ts', edits: [{ search: 'old', replace: 'new' }] },
       ],
     });
     // Split so the two files arrive in separate chunks
@@ -42,7 +42,7 @@ describe('CoderAgent streaming', () => {
 
   it('still returns the full parsed output when no callback is passed', async () => {
     const payload = JSON.stringify({
-      files: [{ path: 'x.ts', content: 'x', action: 'create' }],
+      files: [{ action: 'create', path: 'x.ts', content: 'x' }],
     });
     const router = makeRouter([payload], 0);
     const agent = new CoderAgent(router as never);
@@ -53,7 +53,7 @@ describe('CoderAgent streaming', () => {
 
   it('handles a markdown-fenced stream', async () => {
     const body = JSON.stringify({
-      files: [{ path: 'f.ts', content: 'z', action: 'create' }],
+      files: [{ action: 'create', path: 'f.ts', content: 'z' }],
     });
     const fenced = '```json\n' + body + '\n```';
     const router = makeRouter([fenced]);
@@ -70,8 +70,8 @@ describe('CoderAgent streaming', () => {
     // fired on vs. when the promise resolved.
     const payload = JSON.stringify({
       files: [
-        { path: 'early.ts', content: 'first', action: 'create' },
-        { path: 'late.ts', content: 'second', action: 'modify' },
+        { action: 'create', path: 'early.ts', content: 'first' },
+        { action: 'modify', path: 'late.ts', edits: [{ search: 'old', replace: 'new' }] },
       ],
     });
     const firstObjectEnd = payload.indexOf('}') + 1;

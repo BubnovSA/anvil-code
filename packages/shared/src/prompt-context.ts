@@ -8,6 +8,12 @@ export interface PromptContextInput {
   ragFilePaths: string[];
   projectRoot: string;
   designContext?: string;
+  /**
+   * Files just edited by previous steps in the same task. They take precedence
+   * over "Existing project files" — the disk hasn't been written yet, so the
+   * latest content lives only here.
+   */
+  newlySources?: Array<{ path: string; content: string }>;
 }
 
 const MAX_BYTES_PER_FILE = 8 * 1024;
@@ -20,10 +26,26 @@ const MAX_TOTAL_BYTES = 32 * 1024;
  * optional design notes from Architect.
  */
 export function buildPromptContext(input: PromptContextInput): string {
-  const fullSources = readFullSources(input.ragFilePaths, input.projectRoot);
+  // Avoid showing the same file twice (recent version wins) — if a file is in
+  // newlySources, drop it from the disk-read list.
+  const recentPaths = new Set((input.newlySources ?? []).map(s => s.path));
+  const onDiskPaths = input.ragFilePaths.filter(p => !recentPaths.has(p));
+
+  const fullSources = readFullSources(onDiskPaths, input.projectRoot);
   const sections: string[] = [];
 
   sections.push(`# Project Conventions\n${input.conventions.summary}`);
+
+  if (input.newlySources && input.newlySources.length > 0) {
+    const block = input.newlySources
+      .map(({ path, content }) => `===== BEGIN MODIFIED: ${path} =====\n${content}\n===== END MODIFIED: ${path} =====`)
+      .join('\n\n');
+    sections.push(
+      `# Recently modified by previous steps (CURRENT state — SUPERSEDES "Existing project files")\n` +
+      `These files were just edited by earlier steps in THIS task. Their content here is the LATEST version. When modifying any of these files, base your output on THIS content, not on the older disk version. Preserve everything not directly affected by your current step.\n\n` +
+      block
+    );
+  }
 
   if (fullSources) {
     sections.push(

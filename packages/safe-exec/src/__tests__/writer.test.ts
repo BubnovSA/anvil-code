@@ -34,21 +34,21 @@ describe('SafeWriter', () => {
   it('blocks path traversal with ../', () => {
     const writer = new SafeWriter(tmpDir);
     expect(() =>
-      writer.execute({ path: '../../etc/passwd', content: '', action: 'create' })
+      writer.execute({ action: 'create', path: '../../etc/passwd', content: '' })
     ).toThrow('Path traversal attempt blocked');
   });
 
   it('blocks absolute path outside project root', () => {
     const writer = new SafeWriter(tmpDir);
     expect(() =>
-      writer.execute({ path: '/etc/passwd', content: '', action: 'create' })
+      writer.execute({ action: 'create', path: '/etc/passwd', content: '' })
     ).toThrow('Path traversal attempt blocked');
   });
 
   it('blocks path traversal with encoded segments', () => {
     const writer = new SafeWriter(tmpDir);
     expect(() =>
-      writer.execute({ path: 'foo/../../etc/passwd', content: '', action: 'create' })
+      writer.execute({ action: 'create', path: 'foo/../../etc/passwd', content: '' })
     ).toThrow('Path traversal attempt blocked');
   });
 
@@ -56,29 +56,59 @@ describe('SafeWriter', () => {
 
   it('creates a file inside project root', () => {
     const writer = new SafeWriter(tmpDir);
-    writer.execute({ path: 'src/foo.ts', content: 'export {}', action: 'create' });
+    writer.execute({ action: 'create', path: 'src/foo.ts', content: 'export {}' });
     expect(fs.readFileSync(path.join(tmpDir, 'src/foo.ts'), 'utf8')).toBe('export {}');
   });
 
   it('creates nested directories as needed', () => {
     const writer = new SafeWriter(tmpDir);
-    writer.execute({ path: 'a/b/c/file.ts', content: '// hi', action: 'create' });
+    writer.execute({ action: 'create', path: 'a/b/c/file.ts', content: '// hi' });
     expect(fs.existsSync(path.join(tmpDir, 'a/b/c/file.ts'))).toBe(true);
   });
 
-  it('modifies an existing file', () => {
+  it('modifies an existing file via edit blocks', () => {
     const filePath = path.join(tmpDir, 'existing.ts');
-    fs.writeFileSync(filePath, 'old content');
+    fs.writeFileSync(filePath, 'const greeting = "hi";\nexport { greeting };');
     const writer = new SafeWriter(tmpDir);
-    writer.execute({ path: 'existing.ts', content: 'new content', action: 'modify' });
-    expect(fs.readFileSync(filePath, 'utf8')).toBe('new content');
+    writer.execute({
+      path: 'existing.ts',
+      action: 'modify',
+      edits: [{ search: '"hi"', replace: '"hello"' }],
+    });
+    expect(fs.readFileSync(filePath, 'utf8')).toBe('const greeting = "hello";\nexport { greeting };');
+  });
+
+  it('throws when modify search string is not found', () => {
+    const filePath = path.join(tmpDir, 'existing.ts');
+    fs.writeFileSync(filePath, 'const x = 1;');
+    const writer = new SafeWriter(tmpDir);
+    expect(() =>
+      writer.execute({
+        path: 'existing.ts',
+        action: 'modify',
+        edits: [{ search: 'NOT_THERE', replace: 'foo' }],
+      }),
+    ).toThrow(/edit-apply failed/);
+    // Original file remains untouched
+    expect(fs.readFileSync(filePath, 'utf8')).toBe('const x = 1;');
+  });
+
+  it('throws when modifying a non-existent file', () => {
+    const writer = new SafeWriter(tmpDir);
+    expect(() =>
+      writer.execute({
+        path: 'missing.ts',
+        action: 'modify',
+        edits: [{ search: 'x', replace: 'y' }],
+      }),
+    ).toThrow(/non-existent/);
   });
 
   it('deletes a file', () => {
     const filePath = path.join(tmpDir, 'to-delete.ts');
     fs.writeFileSync(filePath, 'content');
     const writer = new SafeWriter(tmpDir);
-    writer.execute({ path: 'to-delete.ts', content: '', action: 'delete' });
+    writer.execute({ path: 'to-delete.ts', action: 'delete' });
     expect(fs.existsSync(filePath)).toBe(false);
   });
 });

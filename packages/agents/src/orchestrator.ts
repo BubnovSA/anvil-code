@@ -1,6 +1,8 @@
+import fs from 'fs';
+import path from 'path';
 import { ModelRouter } from '@rag-system/model-router';
 import { GraphRetriever } from '@rag-system/rag';
-import { SafeWriter, TestRunner, TypeChecker } from '@rag-system/safe-exec';
+import { SafeWriter, TestRunner, TypeChecker, applyEdits } from '@rag-system/safe-exec';
 import { MemoryStore } from '@rag-system/memory';
 import { GitEngine } from '@rag-system/git-engine';
 import { PlannerAgent } from './planner.js';
@@ -9,6 +11,7 @@ import { ArchitectAgent } from './architect.js';
 import { TesterAgent } from './tester.js';
 import { ReviewerAgent } from './reviewer.js';
 import { FixerAgent } from './fixer.js';
+import { partialFileSize, type PartialFile } from './partial-json.js';
 import {
   FileChange,
   config,
@@ -122,10 +125,41 @@ export class Orchestrator {
       );
     }
 
-    // 5. Write all files to disk
-    for (const change of allFileChanges) {
-      this.writer.execute(change);
-      writtenFiles.push(change.path);
+    // 5. Write all files to disk. We dedupe by path first: if multiple steps
+    // (or one step's Coder output) produced several entries for the same file,
+    // their edits are merged so the whole change is atomic — partial application
+    // followed by a "search not found" error would corrupt the file otherwise.
+    const dedupedFileChanges = dedupeChangesByPath(allFileChanges);
+    const failedWrites: Array<{ change: FileChange; error: Error }> = [];
+
+    for (const change of dedupedFileChanges) {
+      try {
+        this.writer.execute(change);
+        writtenFiles.push(change.path);
+      } catch (err: unknown) {
+        const e = err instanceof Error ? err : new Error(String(err));
+        failedWrites.push({ change, error: e });
+        log.warn({ path: change.path, error: e.message }, 'Initial write failed; queuing for retry');
+      }
+    }
+
+    // 5a. If any modify failed (typically a hallucinated `search` block from
+    // the model), give Fixer one shot with the REAL current file content.
+    // This is the iterative-editing pattern from Aider — model self-corrects
+    // when shown the actual text it should be quoting.
+    if (failedWrites.length > 0) {
+      const retried = await this.retryFailedEdits(failedWrites, mode, log);
+      const dedupedRetry = dedupeChangesByPath(retried);
+      for (const r of dedupedRetry) {
+        try {
+          this.writer.execute(r);
+          writtenFiles.push(r.path);
+          log.info({ path: r.path }, 'Edit succeeded on retry with real-content feedback');
+        } catch (err: unknown) {
+          const e = err instanceof Error ? err : new Error(String(err));
+          log.warn({ path: r.path, error: e.message }, 'Retry also failed; file remains unchanged');
+        }
+      }
     }
 
     // 6. Validation loop: typecheck + tests, with Fixer retries
@@ -224,10 +258,15 @@ export class Orchestrator {
         data: { stepId: step.id },
       });
 
+      // Snapshot the running aggregate so the step sees what previous steps
+      // produced, but later steps that complete in parallel don't mutate this
+      // step's view mid-flight.
+      const previousChanges = allFileChanges.slice();
+
       const work = (async () => {
         try {
           const stepChanges = await withTaskContext({ taskId, stepId: step.id }, () =>
-            this.executeStep(taskId, step, mode, log),
+            this.executeStep(taskId, step, mode, log, previousChanges),
           ) as FileChange[];
           allFileChanges.push(...stepChanges);
           completedSteps.add(step.id);
@@ -311,6 +350,7 @@ export class Orchestrator {
     step: { id: string; description: string; dependencies: string[] },
     mode: 'fast'|'balanced'|'deep',
     log: ReturnType<typeof taskLogger>,
+    previousChanges: FileChange[] = [],
   ): Promise<FileChange[]> {
     const conventions = this.getConventions();
     const items = await this.retriever.retrieveContextItems(step.description);
@@ -319,11 +359,28 @@ export class Orchestrator {
       .join('\n\n---\n\n');
     // Collect unique file paths mentioned by RAG so we can read full source.
     // This is what lets Coder preserve imports and style when modifying.
-    const ragFilePaths = Array.from(new Set(items.map(i => i.filePath)));
+    //
+    // We also unconditionally include the project's entry points (server.ts /
+    // main.ts / app.ts / index.ts when they exist). Vector search rarely surfaces
+    // them — they typically only call other code, with no symbols of their own —
+    // yet they're the most-edited file in cross-file tasks. Without their full
+    // text Coder synthesizes a fictional version, which makes patch-based edits
+    // fail with "search not found".
+    const ragFilePaths = Array.from(new Set([
+      ...items.map(i => i.filePath),
+      ...conventions.entryPoints,
+    ]));
+
+    // Materialize previousChanges into "what each touched file actually contains
+    // right now": for create — use new content; for modify — apply edits on top
+    // of the prior virtual content (or disk if untouched); for delete — drop.
+    // This is what lets a later step see the EXACT current state of a file an
+    // earlier step modified, even though nothing has been written to disk yet.
+    const newlySources = resolveVirtualSources(previousChanges, this.writer.root);
 
     const design = await this.architect.execute(
       step.description,
-      buildPromptContext({ conventions, ragSnippets, ragFilePaths: [], projectRoot: this.writer.root }),
+      buildPromptContext({ conventions, ragSnippets, ragFilePaths: [], projectRoot: this.writer.root, newlySources }),
       mode,
     );
 
@@ -333,6 +390,7 @@ export class Orchestrator {
       ragFilePaths,
       projectRoot: this.writer.root,
       designContext: design.design,
+      newlySources,
     });
     // Leaner variant for Reviewer/Tester that already see files inline in their own prompt.
     const reviewContext = buildPromptContext({
@@ -340,8 +398,9 @@ export class Orchestrator {
       ragSnippets,
       ragFilePaths: [],
       projectRoot: this.writer.root,
+      newlySources,
     });
-    const onCoderFile = (file: { path: string; content: string; action: string }, index: number) => {
+    const onCoderFile = (file: PartialFile, index: number) => {
       taskEvents.emitEvent({
         taskId,
         type: 'coder_file_ready',
@@ -350,7 +409,7 @@ export class Orchestrator {
           stepId: step.id,
           path: file.path,
           action: file.action,
-          size: file.content.length,
+          size: partialFileSize(file),
           index,
         },
       });
@@ -407,7 +466,7 @@ export class Orchestrator {
               stepId: step.id,
               path: file.path,
               action: file.action,
-              size: file.content.length,
+              size: partialFileSize(file),
               index,
               source: 'fixer',
             },
@@ -422,6 +481,66 @@ export class Orchestrator {
     }
 
     return currentChanges;
+  }
+
+  /**
+   * One-shot retry for write failures (almost always "search not found" on a
+   * modify). Reads the actual current content of each failed file and asks the
+   * Fixer to regenerate edits with that exact text in front of it. This is the
+   * iterative-editing pattern from Aider — local models tend to hallucinate
+   * `search` blocks "from memory" the first time, and self-correct when given
+   * the literal file content.
+   */
+  private async retryFailedEdits(
+    failed: Array<{ change: FileChange; error: Error }>,
+    mode: 'fast'|'balanced'|'deep',
+    log: ReturnType<typeof taskLogger>,
+  ): Promise<FileChange[]> {
+    const conventions = this.getConventions();
+    const issues: string[] = [];
+    const failedChanges: FileChange[] = [];
+
+    for (const f of failed) {
+      // Only modify failures benefit from real-content feedback; create/delete
+      // either succeeded or failed for other reasons (path traversal, etc.).
+      if (f.change.action !== 'modify') continue;
+
+      let realContent = '';
+      try {
+        const abs = path.resolve(this.writer.root, f.change.path);
+        realContent = fs.readFileSync(abs, 'utf8');
+      } catch {
+        // File might not exist yet (e.g. an earlier `create` also failed).
+        // Skip — Fixer can't help without ground truth.
+        continue;
+      }
+
+      issues.push(
+        `Edit on ${f.change.path} failed: ${f.error.message}\n\n` +
+        `EXACT current content of ${f.change.path} (use this VERBATIM in your search blocks):\n` +
+        `<<<<<<< CURRENT FILE\n${realContent}\n>>>>>>> END\n\n` +
+        `Regenerate the edits to apply your intended change to THIS exact text. ` +
+        `Each search block must match a substring of the above byte-for-byte.`,
+      );
+      failedChanges.push(f.change);
+    }
+
+    if (failedChanges.length === 0) return [];
+
+    const retryContext = buildPromptContext({
+      conventions,
+      ragSnippets: '',
+      ragFilePaths: failedChanges.map(c => c.path),
+      projectRoot: this.writer.root,
+    });
+
+    log.info(
+      { count: failedChanges.length, paths: failedChanges.map(c => c.path) },
+      'Retrying failed edits with real-content feedback',
+    );
+
+    const fixResult = await this.fixer.execute(issues, failedChanges, retryContext, mode);
+    return fixResult.files;
   }
 
   private async runValidationLoop(
@@ -496,8 +615,10 @@ export class Orchestrator {
       });
       const fixResult = await this.fixer.execute(issues, allFileChanges, validationContext, mode);
 
-      // Re-write fixed files and update tracking
-      for (const fixed of fixResult.files) {
+      // Re-write fixed files and update tracking. Dedupe so the Fixer's
+      // multiple edits to one file collapse into a single atomic apply.
+      const dedupedFix = dedupeChangesByPath(fixResult.files);
+      for (const fixed of dedupedFix) {
         this.writer.execute(fixed);
         const idx = allFileChanges.findIndex(f => f.path === fixed.path);
         if (idx >= 0) allFileChanges[idx] = fixed;
@@ -550,4 +671,79 @@ function detectCycles(steps: Array<{ id: string; dependencies: string[] }>): voi
       }
     }
   }
+}
+
+/**
+ * Walk a list of FileChanges in order and produce a Map<path, content> that
+ * reflects what each touched file would actually contain after the changes
+ * are applied — without writing anything to disk. This is what cross-step
+ * "Recently modified" needs: a step shouldn't see the original disk file when
+ * an earlier step already created or patched it.
+ */
+function resolveVirtualSources(
+  changes: FileChange[],
+  projectRoot: string,
+): Array<{ path: string; content: string }> {
+  const virtual = new Map<string, string>();
+
+  for (const c of changes) {
+    if (c.action === 'create') {
+      virtual.set(c.path, c.content);
+    } else if (c.action === 'modify') {
+      let base = virtual.get(c.path);
+      if (base === undefined) {
+        const abs = path.resolve(projectRoot, c.path);
+        try {
+          base = fs.readFileSync(abs, 'utf8');
+        } catch {
+          // File doesn't exist on disk and wasn't created earlier — can't
+          // simulate; skip so we don't surface a fake "current" version.
+          continue;
+        }
+      }
+      const applied = applyEdits(base, c.edits);
+      if (applied.ok) virtual.set(c.path, applied.result);
+      // If apply failed (search not found), leave virtual map untouched so the
+      // next step still sees the previous valid version. The orchestrator's
+      // SafeWriter will surface the same error at write time anyway.
+    } else if (c.action === 'delete') {
+      virtual.delete(c.path);
+    }
+  }
+
+  return Array.from(virtual, ([path, content]) => ({ path, content }));
+}
+
+/**
+ * Collapse multiple FileChange entries targeting the same path into one. If an
+ * agent emits several `modify` blocks for the same file, their edits are merged
+ * in order so the whole patch is atomic — without this, SafeWriter would apply
+ * the first batch to disk and then fail on a later batch's "search not found",
+ * leaving the file in a half-modified, broken state.
+ *
+ * Conflict resolution:
+ * - modify + modify  → merged edits, applied in arrival order
+ * - delete           → wins over anything earlier (file is going away)
+ * - create / mixed   → last write wins (rare and ambiguous; an agent should not do this)
+ */
+function dedupeChangesByPath(changes: FileChange[]): FileChange[] {
+  const byPath = new Map<string, FileChange>();
+  for (const c of changes) {
+    const existing = byPath.get(c.path);
+    if (!existing) { byPath.set(c.path, c); continue; }
+
+    if (c.action === 'delete') {
+      byPath.set(c.path, c);
+    } else if (c.action === 'modify' && existing.action === 'modify') {
+      byPath.set(c.path, {
+        action: 'modify',
+        path: c.path,
+        edits: [...existing.edits, ...c.edits],
+      });
+    } else {
+      // create-after-create, modify-after-create, etc. — last one wins.
+      byPath.set(c.path, c);
+    }
+  }
+  return Array.from(byPath.values());
 }
