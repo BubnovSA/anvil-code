@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.27 (partial) — Planner few-shot landed, lean Architect/Reviewer/Tester context REVERTED после регрессии; Phase 2 закрыта; 219/219 unit-тестов  
+**Статус проекта**: 🟡 v1.29 — scale validation на rag-system (91 файл) показала **жёсткий ceiling patch-based Coder'а**: atomic-задача fails на medium-проекте (search-blocks не матчатся). **Решение: Phase 3 v1.30 tool-calling Coder — урgentно**. Индексация и storage держат scale.  
 **Последнее обновление**: 2026-04-29  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -602,12 +602,54 @@ Hypothesis: Architect/Reviewer/Tester не нуждаются в full source —
 
 **Никаких изменений в behavior pipeline'a** — это чистый observability win, не влияет на бенчмарк scores. Отдельный benchmark не требовался.
 
-### Phase 3 — Architecture (📋 после Phase 2)
+### Phase 3 — Architecture (🔴 v1.30 урgent после v1.29 scale findings)
 
-#### v1.30+ — Tool-calling Coder
-- Заменить JSON output на tool-calling: `read_file()`, `replace_in_file()`, `run_test()`
-- Архитектурное решение для класса destruction'ов (модель не "пишет файл", а вызывает операции)
-- Большая переделка (~3-5 дней)
+**Фаза 2 закрыта. v1.29 scale validation на 91-файловом rag-system показала, что patch-based Coder не масштабируется. Phase 3 — архитектурный сдвиг — необходим для крупных проектов (главная цель проекта).**
+
+#### v1.29 — Scale validation на rag-system (✅ выполнено, результат: blocked by Coder ceiling)
+
+Изолированная копия rag-system как target (91 TS файл, 65 с символами, 6717 LOC). Индексация 3.5s / 210 vectors — OK.
+
+**Atomic L1':** /version в server.ts → 0/10 (search-not-found cascade на всех 5 LLM-вызовах: Coder + retry-Fixer + 3 × validation-Fixer).
+**Atomic L1'':** getSize() в queue.ts → ~4/10, commit_skipped, scope creep в test files.
+
+**Главные findings:**
+- Patch-based Coder hallucinates `search`-блоки — не матчатся с реальными файлами на medium scale
+- v1.23 retry-with-real-content + v1.25.1 validation-Fixer try/catch предотвращают краши, но **не решают** проблему
+- Repo-map default 6KB budget overflow'ит уже на 91 файле (39 of 65 omitted), alphabetic sort даёт bias в test files → scope creep
+- Indexing + HNSW JSON storage держат scale fine — Phase 4 не блокирующий
+- Подробный анализ: [docs/benchmarks/runs/2026-04-29-v1.29-scale-rag-system.md](docs/benchmarks/runs/2026-04-29-v1.29-scale-rag-system.md)
+
+#### v1.29.1 — Repo-map at scale (~2 часа, опциональный precursor для v1.30)
+- [ ] Default `maxBytes` bump 6000 → 16000 для medium projects (~4000 tokens)
+- [ ] Sort priority: production paths first (skip `__tests__/` и `*.test.ts`), test files в отдельной секции с собственным budget
+- [ ] Опционально: section headers "Production:" / "Tests:" в output
+- [ ] **Атакует:** scope creep из test files (наблюдалось на v1.29) + truncation 60% files на medium scale
+
+#### v1.30 — Tool-calling Coder (🔴 урgent после v1.29 findings, ~3-5 дней)
+
+**Корневая проблема:** model writing `{search, replace}` blocks requires byte-perfect search matches. Это работало на 5-файловом sandbox'е, **физически ломается на 91-файловом проекте** — model can't reproduce the file's exact bytes when the prompt is long. Все 5 LLM-вызовов в pipeline'е (Coder + retry + 3 × validation Fixer) независимо галлюцинируют search.
+
+**Решение:** Coder вызывает tools, не пишет JSON output:
+- `read_file(path, lines?)` — читает кусок файла; модель работает с реальными байтами с диска
+- `replace_in_file(path, line_range, new_text)` — редактирует по координатам, не по quote
+- `run_test(file?)` — прогоняет тесты на месте
+- `list_dir(path)` — для exploration
+
+Никаких search-блоков → никаких search-not-found ошибок. Архитектурно eliminates the dominant failure mode на scale.
+
+- [ ] Migrate Coder/Fixer от JSON output на tool-calling protocol (Ollama supports it через `tools` field в /api/chat)
+- [ ] Update Orchestrator: streaming tool calls вместо batched JSON parsing
+- [ ] Maintain backward-compat: keep prompt-based Coder под env flag для fallback
+- [ ] Re-run v1.29 scale benchmark после v1.30 — если atomic tasks landed на rag-system → architecture validated
+
+#### v1.31+ — Sub-agents (после v1.30)
+- `BugFixAgent`, `RefactorAgent`, `FeatureAgent` — специализированные роли
+- Planner выбирает кого вызвать вместо unified Coder
+
+#### v1.32+ — Iterative editing с reflection
+- Coder в цикле read → edit → verify → adjust
+- Self-critique перед отправкой Reviewer'у
 
 #### v1.31+ — Sub-agents
 - `BugFixAgent`, `RefactorAgent`, `FeatureAgent` — специализированные роли
