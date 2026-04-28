@@ -53,6 +53,66 @@ Rules — STEP COUNT IS THE MOST IMPORTANT:
     fooPlugin(app) after the Fastify init. Preserve all existing imports, registrations,
     and the listen call."
 
+WORKED EXAMPLES — mirror this structure on real tasks.
+
+EXAMPLE A — Multi-file feature with three coupled changes → ONE STEP, not three.
+
+Task: "Add soft-delete to users. (1) In src/types.ts, add deletedAt: string | null to
+the User interface. (2) In src/services/user-service.ts, update create() to set
+deletedAt: null and list() to filter deleted users. (3) In src/routes/users.ts, add
+DELETE /users/:id that sets deletedAt and returns 204."
+
+WRONG plan (causes cross-step drift — routes/users.ts will reference an inconsistent
+service signature when steps run independently):
+{ "steps": [
+  { "id": "step1", "description": "Add deletedAt to User interface", "dependencies": [] },
+  { "id": "step2", "description": "Update UserService for soft-delete", "dependencies": ["step1"] },
+  { "id": "step3", "description": "Add DELETE route", "dependencies": ["step2"] }
+] }
+
+CORRECT plan — ONE step naming all three files explicitly:
+{ "steps": [
+  {
+    "id": "step1",
+    "description": "Implement soft-delete across three files. (1) In src/types.ts, add 'deletedAt: string | null' to the User interface. (2) In src/services/user-service.ts, update create() to set deletedAt: null on new users; update list() to filter out users where deletedAt !== null; preserve get() behavior. (3) In src/routes/users.ts, add app.delete('/users/:id', async (request, reply) => { ... }) that finds the user by id (404 if missing), sets user.deletedAt = new Date().toISOString(), and returns reply.code(204).send(). Preserve all existing routes, imports, and behavior elsewhere.",
+    "dependencies": []
+  }
+] }
+
+Why ONE step:
+- All three files participate in a SINGLE feature (soft-delete). Splitting them
+  means a later step's Coder doesn't see the exact field name the earlier step
+  just put in the User interface, etc. Coupling is too tight to tolerate drift.
+- The description names every file path, every change, and the exact code shape.
+  The Coder reads ONE comprehensive instruction, not three fragmented ones.
+
+EXAMPLE B — Two independent additions in different subsystems → TWO STEPS.
+
+Task: "Add a /health endpoint and add a request-id middleware. They are unrelated."
+
+CORRECT plan — two independent steps (no dependencies, can run in parallel):
+{ "steps": [
+  {
+    "id": "step1",
+    "description": "In src/routes/users.ts, add app.get('/health', async () => ({ status: 'ok' })) inside the existing usersRoutes function. Preserve all other routes.",
+    "dependencies": []
+  },
+  {
+    "id": "step2",
+    "description": "Create src/middleware/request-id.ts exporting requestIdPlugin(app: FastifyInstance) that adds an onRequest hook setting reply.header('x-request-id', randomUUID()), AND in src/server.ts add 'import { requestIdPlugin } from \\"./middleware/request-id.js\\";' plus 'requestIdPlugin(app);' after Fastify init. Preserve all existing code in server.ts.",
+    "dependencies": []
+  }
+] }
+
+Why TWO steps with empty dependencies:
+- The two features touch different files entirely (only server.ts overlap is the
+  one-line registration in step2 — step1 doesn't touch server.ts at all).
+- They're orthogonal: a problem in one doesn't block the other.
+- step2 is itself a single step (cross-file coupled, rule 6a) — middleware
+  creation + registration MUST stay together.
+
+End of examples.
+
 Output ONLY valid JSON matching this schema: { "steps": [{ "id": "step1", "description": "...", "dependencies": [] }] }`;
 
   async execute(taskDescription: string, context: string, taskMode: 'fast'|'balanced'|'deep'): Promise<PlanOutput> {

@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.28 — silent partial completion events; 219/219 unit-тестов; partial state теперь surfaced через `commit_partial` SSE event и поля `partial`/`failedStepIds`/`unrecoveredWrites` в `done.data`  
+**Статус проекта**: 🟢 v1.27 (partial) — Planner few-shot landed, lean Architect/Reviewer/Tester context REVERTED после регрессии; Phase 2 закрыта; 219/219 unit-тестов  
 **Последнее обновление**: 2026-04-29  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -557,12 +557,34 @@ node packages/api/dist/index.js
 
 **Surfaced finding:** Reviewer стал новым variance source на cumulative L2.3 — три раза отклонил Coder output для step3 в #1 run. Кандидат на v1.26.1 (few-shot для Reviewer prompts) если pattern повторится.
 
-#### v1.27 — Per-agent context tailoring (~1 день)
-- [ ] Reviewer получает diff, не full files
-- [ ] Planner получает tree + signatures, не full source
-- [ ] Architect видит step description + conventions only
-- [ ] Coder/Fixer/Tester — как сейчас (full context)
-- [ ] **Атакует:** прожорливость промптов, ускоряет каждый шаг на 30-50%
+#### v1.27 — Per-agent context tailoring (⚠️ partial — see run file)
+
+**Two changes attempted; one landed, one reverted после empirical regression.**
+
+##### ✅ Landed: Planner few-shot examples
+- [x] [planner.ts](packages/agents/src/planner.ts) — секция WORKED EXAMPLES с 2 примерами:
+  - **Example A:** Multi-file feature (3 coupled files) → ОДИН step naming all three. WRONG plan с 3 раздельными steps показан для контраста. Атакует L2.3 cumulative variance из v1.26 (rule 6a)
+  - **Example B:** Two unrelated features → 2 independent steps с empty dependencies. Различает "couple together" от "actually separate"
+- [x] Sanity check post-revert: L2.3 cumulative single-shot landed GREEN 9.0/10 (1-step coupled plan), L2.1 single-shot 10/10 — baseline восстановлена
+
+##### ❌ Reverted: Lean Architect/Reviewer/Tester context
+
+Hypothesis: Architect/Reviewer/Tester не нуждаются в full source — Coder пишет код, остальные агенты только design/review/test. Стрипуем context → 30-50% token savings без quality hit.
+
+**Эмпирическая фальсификация на 5 прогонах:**
+- L1.1: оба run'а 10/10 quality, но wall time **3-5× медленнее** v1.26 (6 + 10.5 мин vs 2.16 + 2.15 мин); один run сделал ненужное scope creep в server.ts
+- L2.1: variance взорвалась — `[10, 1]` mean 5.5 spread 9 (vs v1.26 `[10, 10]` zero-variance). #2 — катастрофа: Coder выдал `action: 'modify'` для несуществующего файла → SafeWriter throw → unrecoveredWrites → ничего не закоммичено
+- L2.3 cumulative: **commit_skipped после 3 Fixer rounds**. routes/users.ts разрушен (duplicate POST body, embedded DELETE inside POST). Wall 23 мин (vs v1.26 best 7 мин)
+
+**Вывод:** Architect's `design` field load-bearing для Coder. Lean Architect → generic design → Coder теряет специфику (file existence cues, exact patterns) → cascading regression. Per-agent context tailoring сложнее чем кажется — agents share information через handoffs.
+
+**[orchestrator.ts](packages/agents/src/orchestrator.ts) revert'нут к v1.26 контекстам.** Sanity-check после revert подтвердил восстановление baseline: L2.1 10/10, L2.3 9.0/10, wall times normalized.
+
+**Detailed empirical record:** [docs/benchmarks/runs/2026-04-29-v1.27-per-agent-context.md](docs/benchmarks/runs/2026-04-29-v1.27-per-agent-context.md).
+
+##### Future work на ту же тему
+- Если возвращаться к per-agent tailoring — делать **по одному агенту за итерацию** с benchmark gate. Reviewer самый безопасный кандидат (он получает full patch как parameter). Architect и Tester — context preserved.
+- Идея для post-applyEdits sanity check (brace balance) — surface'ила себя на malformed routes/users.ts; future hardening item.
 
 #### v1.28 — Silent partial completion events (✅ реализовано)
 
