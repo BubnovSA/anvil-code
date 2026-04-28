@@ -138,6 +138,28 @@ export class WorkingSet {
   }
 
   /**
+   * Replace the file's content wholesale, preserving the action label of the
+   * existing entry. Used for undo: when a higher-level check rejects an edit
+   * (e.g. brace-balance verification), the dispatcher calls overwriteRaw with
+   * the pre-edit snapshot to revert the WorkingSet without losing the file's
+   * "modify"/"create" status.
+   *
+   * Refuses to act on a file that hasn't been touched yet — the caller should
+   * have a previous content to restore. Refuses on a deleted file as well.
+   */
+  overwriteRaw(relPath: string, content: string): WorkingSetResult {
+    const cached = this.files.get(relPath);
+    if (cached === undefined) {
+      return { ok: false, error: `cannot overwriteRaw a file not yet in working set: ${relPath}` };
+    }
+    if (cached.action === 'delete') {
+      return { ok: false, error: `cannot overwriteRaw a deleted file: ${relPath}` };
+    }
+    this.files.set(relPath, { content, action: cached.action });
+    return { ok: true };
+  }
+
+  /**
    * Returns whether anything in the working set has been mutated. Useful for
    * detecting "model called done() without doing anything" cases.
    */

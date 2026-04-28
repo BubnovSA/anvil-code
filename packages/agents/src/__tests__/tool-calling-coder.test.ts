@@ -7,6 +7,7 @@ import {
   TOOL_DEFINITIONS,
   extractAllowedPaths,
   isWriteAllowed,
+  checkBraceBalance,
 } from '../tool-calling-coder.js';
 import type { WritePolicy } from '../tool-calling-coder.js';
 import { WorkingSet } from '../working-set.js';
@@ -328,6 +329,247 @@ describe('dispatchToolCall', () => {
         forbiddenPatterns: [/(?:^|\/)package\.json$/],
       });
       expect(r.ok).toBe(true);
+    });
+  });
+
+  // v1.30.5 — verify-syntax (brace balance). Catches the structural-placement
+  // failure mode from the v1.30.4 benchmark where replace_in_file consumed a
+  // closing `});` without restoring it, leaving the file unbalanced. Dispatcher
+  // rolls back the WorkingSet and surfaces an error so the model can retry.
+  describe('checkBraceBalance', () => {
+    it('accepts balanced TS source', () => {
+      const r = checkBraceBalance(`
+        export function foo(x: number): number {
+          if (x > 0) { return x * 2; }
+          return 0;
+        }
+      `);
+      expect(r.ok).toBe(true);
+    });
+
+    it('rejects net-positive curly imbalance (unclosed brace)', () => {
+      const r = checkBraceBalance('function foo() {\n  return 1;\n');
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.balance.curly).toBe(1);
+        expect(r.reason).toMatch(/unclosed/);
+      }
+    });
+
+    it('rejects extra closing brace early-exit during scan', () => {
+      const r = checkBraceBalance('function foo() { return 1; }}');
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/extra closing/);
+    });
+
+    it('ignores braces inside strings', () => {
+      const r = checkBraceBalance(`const x = "{ unclosed }";\nconst y = '}';\n`);
+      expect(r.ok).toBe(true);
+    });
+
+    it('ignores braces inside line and block comments', () => {
+      const r = checkBraceBalance(`
+        // here is a } unmatched
+        /* and another { unmatched */
+        function ok() { return 1; }
+      `);
+      expect(r.ok).toBe(true);
+    });
+
+    it('handles escape sequences in strings', () => {
+      const r = checkBraceBalance(`const s = "she said \\"{}\\" out loud";\n`);
+      expect(r.ok).toBe(true);
+    });
+
+    it('rejects unbalanced parens', () => {
+      const r = checkBraceBalance('function foo( { return 1; }');
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.balance.paren).toBeGreaterThan(0);
+    });
+
+    it('detects the v1.30.4 "consumed closing brace" pattern', () => {
+      // What the model produced on the live /version benchmark — `/version`
+      // nested inside `/health`'s body, /health's `});` consumed.
+      const broken = `
+        app.get('/health', async () => {
+          const client = new OllamaClient();
+          return { status: 'ok' };
+
+            app.get('/version', async (request, reply) => {
+              return { version: '1.0.0' };
+            });
+
+          app.post('/task', async (request, reply) => {
+            // ...
+          });
+        }
+      `;
+      const r = checkBraceBalance(broken);
+      expect(r.ok).toBe(false); // file is structurally broken
+    });
+  });
+
+  describe('replace_in_file with brace-balance verification', () => {
+    function setupBalancedFile(): void {
+      write(
+        'src/server.ts',
+        `import { Foo } from './foo.js';
+
+export function buildServer() {
+  const app = new App();
+
+  app.get('/health', () => {
+    return { status: 'ok' };
+  });
+
+  app.post('/task', () => {
+    return { id: 1 };
+  });
+
+  return app;
+}
+`,
+      );
+    }
+
+    it('rolls back when an edit unbalances a previously-balanced file', () => {
+      setupBalancedFile();
+      const policy: WritePolicy = {
+        allowed: new Set(['src/server.ts']),
+        forbiddenPatterns: [],
+      };
+
+      const before = ws.read('src/server.ts');
+      // Replace lines 6-8 (the /health body + closing) with content that does
+      // NOT include the closing `});` — mirrors the v1.30.4 failure.
+      const r = dispatchToolCall(
+        {
+          function: {
+            name: 'replace_in_file',
+            arguments: {
+              path: 'src/server.ts',
+              start_line: 7,
+              end_line: 8,
+              new_text: '    return { status: \'broken\' };',
+            },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r.text).toMatch(/unbalanced/);
+      expect(r.text).toMatch(/rolled back/);
+      expect(ws.read('src/server.ts')).toBe(before);
+    });
+
+    it('allows balanced edits through unchanged', () => {
+      setupBalancedFile();
+      const policy: WritePolicy = {
+        allowed: new Set(['src/server.ts']),
+        forbiddenPatterns: [],
+      };
+
+      // Replace just the body line of /health — keeps braces balanced.
+      const r = dispatchToolCall(
+        {
+          function: {
+            name: 'replace_in_file',
+            arguments: {
+              path: 'src/server.ts',
+              start_line: 7,
+              end_line: 7,
+              new_text: '    return { status: \'ok\', uptime: 42 };',
+            },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r.text).toMatch(/^ok: replaced/);
+      expect(ws.read('src/server.ts')).toContain('uptime: 42');
+    });
+
+    it('does not balance-check non-source files (e.g. .md)', () => {
+      write('README.md', '# Title\n\nSome { unbalanced text on purpose.\n');
+      const policy: WritePolicy = {
+        allowed: new Set(['README.md']),
+        forbiddenPatterns: [],
+      };
+      const r = dispatchToolCall(
+        {
+          function: {
+            name: 'replace_in_file',
+            arguments: { path: 'README.md', start_line: 1, end_line: 1, new_text: '# New Title' },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r.text).toMatch(/^ok: replaced/);
+    });
+  });
+
+  describe('create_file with brace-balance pre-check', () => {
+    it('rejects creating a TS file with unbalanced content', () => {
+      const policy: WritePolicy = {
+        allowed: new Set(['src/broken.ts']),
+        forbiddenPatterns: [],
+      };
+      const r = dispatchToolCall(
+        {
+          function: {
+            name: 'create_file',
+            arguments: {
+              path: 'src/broken.ts',
+              content: 'export function foo() {\n  return 1;\n', // missing }
+            },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r.text).toMatch(/structurally unbalanced/);
+      expect(ws.exists('src/broken.ts')).toBe(false); // not created
+    });
+
+    it('allows creating a balanced TS file', () => {
+      const policy: WritePolicy = {
+        allowed: new Set(['src/clean.ts']),
+        forbiddenPatterns: [],
+      };
+      const r = dispatchToolCall(
+        {
+          function: {
+            name: 'create_file',
+            arguments: {
+              path: 'src/clean.ts',
+              content: 'export function foo() {\n  return 1;\n}\n',
+            },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r.text).toMatch(/^ok: created/);
+      expect(ws.exists('src/clean.ts')).toBe(true);
+    });
+
+    it('skips balance check for non-source files (e.g. .md, .json)', () => {
+      const policy: WritePolicy = {
+        allowed: new Set(['notes.md', 'data.json']),
+        forbiddenPatterns: [],
+      };
+      const r1 = dispatchToolCall(
+        {
+          function: {
+            name: 'create_file',
+            arguments: { path: 'notes.md', content: '# Has unbalanced { brace' },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r1.text).toMatch(/^ok: created/);
     });
   });
 

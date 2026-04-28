@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.30.4 — Coder cargo-cult prompt fix; 280/280 unit-тестов. **Впервые** Coder выдал точно по spec content `return { version: '1.0.0' }` на rag-system-target. Vsплыл следующий layer — structural placement (closing brace eaten by replace_in_file). v1.30.5 verify-syntax tool — следующий unblock.  
+**Статус проекта**: 🟢 v1.30.5 — verify-syntax tool после replace_in_file (brace balance check + rollback); 294/294 unit-тестов. **Первый раз task on rag-system-target completed без Ollama crash** — graduated с `task_failed` (infra) на `commit_skipped` (output quality). Семь iterations пилили семь failure modes; следующий шаг — стратегическая пауза на whack-a-mole (v1.31 sub-agents) или ещё одна micro-fix (v1.30.6 duplicate detection).  
 **Последнее обновление**: 2026-04-29  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -791,16 +791,58 @@ Six iterations peeled six different failure modes. v1.30.4 closed the **content*
 
 **Detailed run-file:** [docs/benchmarks/runs/2026-04-29-v1.30.4-cargo-cult-fix.md](docs/benchmarks/runs/2026-04-29-v1.30.4-cargo-cult-fix.md)
 
-#### v1.30.5 — Verify-syntax tool после replace_in_file (🔴 next, ~3-4 часа)
+#### v1.30.5 — Verify-syntax tool после replace_in_file (✅ реализовано)
 
-**Цель:** v1.30.4 surface'ил что Coder может выбрать line range которая consumes structural delimiters (closing brace) → файл становится syntactically broken даже когда content правильный. Validation потом catch'ит, Fixer iterates без convergence, Ollama crashes.
+**Цель:** v1.30.4 surface'ил что Coder может выбрать line range которая consumes structural delimiters → файл становится syntactically broken. Validation fails, Fixer iterates без convergence, Ollama crashes.
 
-- [ ] `WorkingSet.replace()` после применения edit — fast syntactic check файла (brace/paren/bracket balance — простой токен-уровневый проход с string/comment awareness)
-- [ ] Если unbalanced → tool result returns `error: edit at lines X-Y left the file unbalanced (expected matching '})', got '});')` → модель видит warning в tool message, retry'ит within its same loop, до того как validation вообще запустится
-- [ ] Brace balance check minimal: `{` `}` `[` `]` `(` `)` count, accounting for strings и comments. Не full parse — это costly и язык-specific
-- [ ] **Атакует:** structural placement error из v1.30.4 + getSize-outside-class из v1.30 + similar class
+- [x] [packages/agents/src/tool-calling-coder.ts](packages/agents/src/tool-calling-coder.ts):
+  - `checkBraceBalance(content)` — string/comment-aware balance check (`{}/()/​[]`). Игнорирует braces в `"strings"`, `// line`, `/* block */` comments, template literals. Early-exits на net-negative (closing without opener mid-file). Returns `{ok, balance}` или `{ok:false, reason, balance}`
+  - `WorkingSet.overwriteRaw(path, content)` — preserves entry's action label, used for atomic undo
+  - `replace_in_file` dispatcher: capture pre-edit content + balance, apply replace, re-check; if was balanced → unbalanced — call `overwriteRaw` to restore + return error message naming the issue. Model retries within its loop, до того как validation запускается
+  - `create_file`: pre-check supplied content для balance
+  - Skip check для non-source файлов (md/json/yaml)
+- [x] 14 новых unit-тестов: balance detection, string/comment awareness, escape sequences, the v1.30.4 "consumed closing brace" pattern caught, rollback behavior, balanced edits pass-through, non-source file skip, create_file pre-check
+- [x] 294/294 общая зелёная
 
-После v1.30.5 expect first end-to-end GREEN commit на 91-файловом проекте: content correct (v1.30.4) + placement correct (v1.30.5) + scope correct (v1.30.1) + Fixer rarely fires + Ollama не крашит.
+**Live bench /version на rag-system-target (32 мин):**
+
+| Phase | v1.30.4 | **v1.30.5** |
+|---|---|---|
+| Task status | `task_failed` (Ollama crash) | **`completed`** ✓ first time! |
+| Coder content | correct | correct |
+| File structure | unbalanced (closing eaten) | duplicate code (balance OK but structurally messy) |
+| Final | task_failed | commit_skipped |
+
+**Главный win:** **первый раз task завершилась без Ollama crash на 91-файловом проекте**. Graduated с `task_failed` (infra layer) на `commit_skipped` (output quality layer) — recoverable failure. v1.30.3.1 history pruning + v1.30.5 verify-syntax (cuts off some Fixer iterations early) держат Ollama up через 32 мин.
+
+**Cumulative progression на /version (7 iterations, 7 failure modes peeled):**
+
+| Iteration | Coder did right | Coder did wrong |
+|---|---|---|
+| v1.30 | server.ts surgical | scope creep |
+| v1.30.1 | scope OK | cargo-cult content |
+| v1.30.4 | scope + content correct | structural placement (closing eaten) |
+| **v1.30.5** | **scope + content + brace balance** | **duplicate code (model includes context lines in new_text)** |
+
+Brace balance correctly catches v1.30.4 failure (verified в unit test). Но новый failure это duplicate content — model в new_text включила re-paste sibling-route header, balance проходит (дубль самобалансируется), но файл структурно messy.
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-29-v1.30.5-verify-syntax.md](docs/benchmarks/runs/2026-04-29-v1.30.5-verify-syntax.md)
+
+#### v1.30.6 (опционально) — Duplicate-content detection (~2-3 часа)
+
+**Цель:** v1.30.5 surface'ил duplicate-content failure: model в new_text включает re-paste lines из surrounding context (думая что нужно "preserve" окружающий код). Brace balance не ловит — text duplicates are self-balancing.
+
+- [ ] После `replace_in_file`: scan 5-10 lines immediately before `start_line` and after `end_line` в post-edit content. Если new_text содержит exact-line matches с этими — refuse + rollback с message `"new_text duplicates context lines — replace_in_file should NOT include surrounding context, it replaces the named line range only"`
+- [ ] **Атакует:** explicit failure mode из v1.30.5 — duplicate /health header в /version task
+
+#### Стратегическая развилка после 7 micro-iterations
+
+**Кратко:** v1.30 → v1.30.5 пилили 7 failure modes Coder'a, каждый peeled новый layer. v1.30.6 (duplicate detection) — ещё один whack-a-mole. **Альтернатива — v1.31 sub-agents** + structural anchors:
+- Заменить `replace_in_file(path, start_line, end_line, new_text)` на `replace_function('UserService.list', new_body)` / `add_route(file, 'GET', '/version', handler_body)`
+- Symbol-anchored edits eliminate whole classes of placement bugs
+- Coder работает в semantic layer, не в byte/line layer
+
+Стратегический выбор после v1.30.5 коммита.
 
 #### v1.31+ — Sub-agents (после v1.30)
 - `BugFixAgent`, `RefactorAgent`, `FeatureAgent`, `MigrationAgent` — специализированные роли

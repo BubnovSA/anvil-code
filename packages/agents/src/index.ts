@@ -8,6 +8,7 @@ export {
   dispatchToolCall,
   extractAllowedPaths,
   isWriteAllowed,
+  checkBraceBalance,
   TOOL_DEFINITIONS,
 } from './tool-calling-coder.js';
 export type { WritePolicy } from './tool-calling-coder.js';

@@ -245,6 +245,111 @@ const PERMISSIVE_POLICY: WritePolicy = {
   forbiddenPatterns: [],
 };
 
+/**
+ * Source-file extensions worth balance-checking. Picks JS/TS/JSX/TSX and a few
+ * common siblings; skips json/yaml/md/etc. where braces don't have to balance
+ * the same way (or are checked by their own parsers downstream).
+ */
+const BALANCE_CHECK_EXTS = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
+
+interface Balance {
+  curly: number;
+  paren: number;
+  square: number;
+}
+
+/**
+ * Lightweight brace/paren/bracket balance checker for TS/JS source. String-
+ * and comment-aware so braces inside strings (`"{"`) or comments (`/* { *\/`)
+ * don't throw the count off. Not a full tokenizer — does NOT understand:
+ *   - Template literal expressions (`${...}`) — treated as literal string content
+ *   - JSX (returns may go negative on TSX with unmatched-looking JSX braces)
+ *   - Regex literals (`/{}/`) — treated as division by braces, can miscount
+ *
+ * Designed to catch the structural-placement bug v1.30.4 surfaced (model
+ * consumed a closing `});` in replace_in_file without restoring it). Common
+ * failure modes — net-positive or net-negative curly/paren counts — are
+ * caught reliably. Edge cases (regex, JSX) trade off for a fast,
+ * dependency-free check that runs after every edit without slowing the loop.
+ */
+export function checkBraceBalance(content: string):
+  | { ok: true; balance: Balance }
+  | { ok: false; reason: string; balance: Balance } {
+  const b: Balance = { curly: 0, paren: 0, square: 0 };
+
+  enum State {
+    Code,
+    LineComment,    // //
+    BlockComment,   // /* */
+    SingleString,   // '...'
+    DoubleString,   // "..."
+    Backtick,       // `...`
+  }
+  let state = State.Code;
+
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i];
+    const next = i + 1 < content.length ? content[i + 1] : '';
+
+    switch (state) {
+      case State.LineComment:
+        if (ch === '\n') state = State.Code;
+        continue;
+      case State.BlockComment:
+        if (ch === '*' && next === '/') { state = State.Code; i++; }
+        continue;
+      case State.SingleString:
+      case State.DoubleString:
+      case State.Backtick: {
+        if (ch === '\\') { i++; continue; } // skip escaped char
+        const closer =
+          state === State.SingleString ? "'" :
+          state === State.DoubleString ? '"' : '`';
+        if (ch === closer) state = State.Code;
+        continue;
+      }
+      case State.Code:
+        if (ch === '/' && next === '/') { state = State.LineComment; i++; continue; }
+        if (ch === '/' && next === '*') { state = State.BlockComment; i++; continue; }
+        if (ch === "'") { state = State.SingleString; continue; }
+        if (ch === '"') { state = State.DoubleString; continue; }
+        if (ch === '`') { state = State.Backtick; continue; }
+        if (ch === '{') b.curly++;
+        else if (ch === '}') b.curly--;
+        else if (ch === '(') b.paren++;
+        else if (ch === ')') b.paren--;
+        else if (ch === '[') b.square++;
+        else if (ch === ']') b.square--;
+
+        // Early-exit on net-negative — closing without an opener mid-file
+        // means the file is structurally broken right at this point.
+        if (b.curly < 0) {
+          return { ok: false, reason: `extra closing '}' near offset ${i}`, balance: b };
+        }
+        if (b.paren < 0) {
+          return { ok: false, reason: `extra closing ')' near offset ${i}`, balance: b };
+        }
+        if (b.square < 0) {
+          return { ok: false, reason: `extra closing ']' near offset ${i}`, balance: b };
+        }
+        break;
+    }
+  }
+
+  if (b.curly !== 0 || b.paren !== 0 || b.square !== 0) {
+    const parts: string[] = [];
+    if (b.curly !== 0) parts.push(`${b.curly > 0 ? 'unclosed' : 'extra closing'} '${b.curly > 0 ? '{' : '}'}': net ${b.curly}`);
+    if (b.paren !== 0) parts.push(`${b.paren > 0 ? 'unclosed' : 'extra closing'} '${b.paren > 0 ? '(' : ')'}': net ${b.paren}`);
+    if (b.square !== 0) parts.push(`${b.square > 0 ? 'unclosed' : 'extra closing'} '${b.square > 0 ? '[' : ']'}': net ${b.square}`);
+    return { ok: false, reason: parts.join(', '), balance: b };
+  }
+  return { ok: true, balance: b };
+}
+
+function shouldBalanceCheck(path: string): boolean {
+  return BALANCE_CHECK_EXTS.test(path);
+}
+
 export function dispatchToolCall(
   call: ToolCall,
   ws: WorkingSet,
@@ -275,8 +380,38 @@ export function dispatchToolCall(
       }
       const allow = isWriteAllowed(filePath, policy);
       if (!allow.ok) return { text: `error: ${allow.reason}`, done: false };
+
+      // v1.30.5 — capture pre-edit content + balance for syntax verification.
+      // If the edit makes a previously-balanced file structurally unbalanced,
+      // we roll back and tell the model what went wrong. Catches the v1.30.4
+      // failure mode where a replace consumed a closing `});` without
+      // including a replacement, leaving a nested-handlers mess.
+      const balanceBefore = shouldBalanceCheck(filePath)
+        ? (() => {
+            const before = ws.read(filePath);
+            return before !== null ? { content: before, check: checkBraceBalance(before) } : null;
+          })()
+        : null;
+
       const r = ws.replace(filePath, startLine, endLine, newText);
       if (!r.ok) return { text: `error: ${r.error}`, done: false };
+
+      if (balanceBefore && balanceBefore.check.ok) {
+        const after = ws.read(filePath) ?? '';
+        const balanceAfter = checkBraceBalance(after);
+        if (!balanceAfter.ok) {
+          // Roll the file back to its pre-edit state. The model retries with
+          // adjusted line range, never seeing the broken intermediate state.
+          ws.overwriteRaw(filePath, balanceBefore.content);
+          return {
+            text:
+              `error: edit at lines ${startLine}-${endLine} would leave ${filePath} structurally unbalanced: ${balanceAfter.reason}. ` +
+              `The change was rolled back. Adjust your line range or new_text — most likely you consumed a closing brace/paren without including a replacement.`,
+            done: false,
+          };
+        }
+      }
+
       return {
         text: `ok: replaced lines ${startLine}-${endLine} in ${filePath}`,
         done: false,
@@ -288,6 +423,22 @@ export function dispatchToolCall(
       if (!filePath) return { text: 'error: create_file requires "path"', done: false };
       const allow = isWriteAllowed(filePath, policy);
       if (!allow.ok) return { text: `error: ${allow.reason}`, done: false };
+
+      // Same balance guard as replace_in_file — a brand-new TS/JS file should
+      // ship with balanced braces. Saves Validator/Fixer cycles on obviously
+      // malformed output.
+      if (shouldBalanceCheck(filePath)) {
+        const check = checkBraceBalance(content);
+        if (!check.ok) {
+          return {
+            text:
+              `error: cannot create ${filePath} — content is structurally unbalanced: ${check.reason}. ` +
+              `Fix the braces/parens/brackets in the content you pass to create_file.`,
+            done: false,
+          };
+        }
+      }
+
       const r = ws.create(filePath, content);
       if (!r.ok) return { text: `error: ${r.error}`, done: false };
       return { text: `ok: created ${filePath}`, done: false };
