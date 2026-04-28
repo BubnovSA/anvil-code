@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { dispatchToolCall, TOOL_DEFINITIONS } from '../tool-calling-coder.js';
+import {
+  dispatchToolCall,
+  TOOL_DEFINITIONS,
+  extractAllowedPaths,
+  isWriteAllowed,
+} from '../tool-calling-coder.js';
+import type { WritePolicy } from '../tool-calling-coder.js';
 import { WorkingSet } from '../working-set.js';
 
 describe('TOOL_DEFINITIONS', () => {
@@ -147,6 +153,182 @@ describe('dispatchToolCall', () => {
     );
     expect(r.done).toBe(false);
     expect(r.text).toMatch(/unknown tool/);
+  });
+
+  // v1.30.1 — scope discipline tests. Policy is built from the task description
+  // and enforced at dispatch time so the model can't wander into config files
+  // or unrelated source it wasn't asked to touch.
+  describe('write policy (v1.30.1 scope discipline)', () => {
+    it('blocks replace_in_file on a path not in the allowed set', () => {
+      write('packages/api/src/server.ts', 'one\ntwo\n');
+      write('packages/api/package.json', '{"name":"@rag-system/api"}\n');
+      const policy: WritePolicy = {
+        allowed: new Set(['packages/api/src/server.ts']),
+        forbiddenPatterns: [/(?:^|\/)package\.json$/],
+      };
+      const r = dispatchToolCall(
+        {
+          function: {
+            name: 'replace_in_file',
+            arguments: { path: 'packages/api/package.json', start_line: 1, end_line: 1, new_text: 'X' },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r.text).toMatch(/protected configuration set/);
+      expect(r.text).not.toContain('ok:');
+    });
+
+    it('blocks create_file when path is not in allowed set (v1.30 scope creep)', () => {
+      const policy: WritePolicy = {
+        allowed: new Set(['packages/job-system/src/queue.ts']),
+        forbiddenPatterns: [],
+      };
+      const r = dispatchToolCall(
+        {
+          function: {
+            name: 'create_file',
+            arguments: { path: 'packages/agents/src/__tests__/vitest-setup.ts', content: 'export {};' },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r.text).toMatch(/not named in the task/);
+    });
+
+    it('allows the in-scope path through', () => {
+      write('src/main.ts', 'x\n');
+      const policy: WritePolicy = {
+        allowed: new Set(['src/main.ts']),
+        forbiddenPatterns: [],
+      };
+      const r = dispatchToolCall(
+        {
+          function: {
+            name: 'replace_in_file',
+            arguments: { path: 'src/main.ts', start_line: 1, end_line: 1, new_text: 'X' },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r.text).toMatch(/^ok: replaced/);
+    });
+
+    it('lets the operator opt in to a forbidden path by naming it in the task', () => {
+      write('packages/api/package.json', '{"deps":{}}\n');
+      const policy: WritePolicy = {
+        // Task description explicitly names package.json — model is allowed to touch it.
+        allowed: new Set(['packages/api/package.json']),
+        forbiddenPatterns: [/(?:^|\/)package\.json$/],
+      };
+      const r = dispatchToolCall(
+        {
+          function: {
+            name: 'replace_in_file',
+            arguments: { path: 'packages/api/package.json', start_line: 1, end_line: 1, new_text: '{"deps":{"x":"^1"}}' },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r.text).toMatch(/^ok: replaced/);
+    });
+
+    it('read_file is unrestricted regardless of policy', () => {
+      write('any/file.ts', 'content\n');
+      const policy: WritePolicy = {
+        allowed: new Set(['only/this.ts']),
+        forbiddenPatterns: [/.*/],
+      };
+      const r = dispatchToolCall(
+        { function: { name: 'read_file', arguments: { path: 'any/file.ts' } } },
+        ws,
+        policy,
+      );
+      expect(r.text).toContain('content');
+      expect(r.text).not.toMatch(/error/);
+    });
+
+    it('empty allowed set means no whitelist enforcement (only forbidden list applies)', () => {
+      write('any/file.ts', 'x\n');
+      const policy: WritePolicy = {
+        allowed: new Set(),
+        forbiddenPatterns: [/(?:^|\/)package\.json$/],
+      };
+      const r1 = dispatchToolCall(
+        {
+          function: {
+            name: 'replace_in_file',
+            arguments: { path: 'any/file.ts', start_line: 1, end_line: 1, new_text: 'X' },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r1.text).toMatch(/^ok: replaced/);
+    });
+  });
+
+  describe('extractAllowedPaths', () => {
+    it('extracts paths with directories and source extensions', () => {
+      const out = extractAllowedPaths('Modify packages/api/src/server.ts to add a /version route.');
+      expect(out.has('packages/api/src/server.ts')).toBe(true);
+    });
+
+    it('extracts multiple paths from a multi-file task', () => {
+      const out = extractAllowedPaths(
+        'Add deletedAt to src/types.ts. Update list() in src/services/user-service.ts. Add DELETE in src/routes/users.ts.',
+      );
+      expect(out.has('src/types.ts')).toBe(true);
+      expect(out.has('src/services/user-service.ts')).toBe(true);
+      expect(out.has('src/routes/users.ts')).toBe(true);
+    });
+
+    it('strips leading "./" so model writes match', () => {
+      const out = extractAllowedPaths('Edit ./src/foo.ts');
+      expect(out.has('src/foo.ts')).toBe(true);
+      expect(out.has('./src/foo.ts')).toBe(false);
+    });
+
+    it('handles paths inside backticks/quotes/parentheses', () => {
+      const out = extractAllowedPaths(
+        'Add a method to `packages/job-system/src/queue.ts`. Also touch "src/types.ts" and (src/routes/users.ts).',
+      );
+      expect(out.has('packages/job-system/src/queue.ts')).toBe(true);
+      expect(out.has('src/types.ts')).toBe(true);
+      expect(out.has('src/routes/users.ts')).toBe(true);
+    });
+
+    it('returns empty set when the task names no specific paths', () => {
+      const out = extractAllowedPaths('Fix the bug where users see duplicate emails.');
+      expect(out.size).toBe(0);
+    });
+
+    it('catches package.json mentions so explicit allow can bypass forbidden', () => {
+      const out = extractAllowedPaths('Update packages/api/package.json to add the zod dependency.');
+      expect(out.has('packages/api/package.json')).toBe(true);
+    });
+  });
+
+  describe('isWriteAllowed', () => {
+    it('blocks forbidden when not in allowed', () => {
+      const r = isWriteAllowed('packages/api/package.json', {
+        allowed: new Set(['src/foo.ts']),
+        forbiddenPatterns: [/(?:^|\/)package\.json$/],
+      });
+      expect(r.ok).toBe(false);
+    });
+
+    it('allows forbidden when explicitly in allowed (operator opt-in)', () => {
+      const r = isWriteAllowed('packages/api/package.json', {
+        allowed: new Set(['packages/api/package.json']),
+        forbiddenPatterns: [/(?:^|\/)package\.json$/],
+      });
+      expect(r.ok).toBe(true);
+    });
   });
 
   it('full edit flow: read → replace → done → toFileChanges has the modified content', () => {

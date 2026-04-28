@@ -30,6 +30,87 @@ import type { CoderOutput, FileReadyCallback } from './coder.js';
 
 const MAX_TOOL_CALLS = 50;
 
+/**
+ * Files that are off-limits even when the task description mentions them only
+ * vaguely. The model must explicitly name the path in the task to be allowed
+ * to touch any of these — they're configuration files where a wrong edit
+ * silently breaks the whole project (build, install, run).
+ *
+ * Why explicit allow rather than total ban: if the task is "Update package.json
+ * to add dependency X", the model legitimately needs to write package.json.
+ * The path will appear in `policy.allowed` (extracted from the task) and the
+ * forbidden check will be bypassed.
+ */
+const ALWAYS_FORBIDDEN_PATTERNS: RegExp[] = [
+  /(?:^|\/)package\.json$/,
+  /(?:^|\/)package-lock\.json$/,
+  /(?:^|\/)pnpm-lock\.yaml$/,
+  /(?:^|\/)yarn\.lock$/,
+  /(?:^|\/)tsconfig.*\.json$/,
+  /(?:^|\/)vitest\.config\.(?:ts|js|mjs|cjs)$/,
+  /(?:^|\/)jest\.config\.(?:ts|js|mjs|cjs)$/,
+  /(?:^|\/)\.env(?:\..+)?$/,
+  /(?:^|\/)turbo\.json$/,
+  /(?:^|\/)\.gitignore$/,
+];
+
+/**
+ * Pull file paths out of a task description so the dispatcher can later
+ * enforce that the model only writes to those paths. Picks up anything that
+ * looks like a relative path with a recognized source-file extension.
+ *
+ * Conservative on purpose: a path appearing in the description is treated as
+ * "the operator gave permission to touch this file." Anything else is denied.
+ * If no paths are mentioned (e.g. "fix the bug where users see duplicates")
+ * we fall back to permissive mode in `isWriteAllowed` — empty whitelist means
+ * no whitelist enforcement, only the forbidden list applies.
+ */
+export function extractAllowedPaths(taskDescription: string): Set<string> {
+  const out = new Set<string>();
+  // Match any token that contains a `/` and ends in a source-file extension,
+  // OR a bare filename with one of those extensions. Strip surrounding
+  // backticks/quotes/parens/commas.
+  // \b after the extension prevents `.js` from greedily matching the prefix
+  // of `.json`, `.jsx`, etc. — alternation is left-to-right and we want the
+  // full extension token, not the first alternative that fits.
+  const re = /[`"'(]?([a-zA-Z0-9_\-./]+?\.(?:tsx|jsx|mjs|cjs|json|yaml|svelte|toml|scss|html|yml|vue|css|ts|js|py|rs|go|md)\b)[`"',)]?/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(taskDescription)) !== null) {
+    let p = match[1];
+    // Drop leading "./" — model writes look like "src/foo.ts" not "./src/foo.ts"
+    if (p.startsWith('./')) p = p.slice(2);
+    out.add(p);
+  }
+  return out;
+}
+
+export interface WritePolicy {
+  /** Paths the task description explicitly named. Empty set ⇒ no whitelist enforcement. */
+  allowed: Set<string>;
+  /** Hardcoded patterns blocked unless the path appears in `allowed`. */
+  forbiddenPatterns: RegExp[];
+}
+
+export function isWriteAllowed(path: string, policy: WritePolicy): { ok: true } | { ok: false; reason: string } {
+  // Forbidden files override everything except an explicit task-description mention.
+  for (const re of policy.forbiddenPatterns) {
+    if (re.test(path) && !policy.allowed.has(path)) {
+      return {
+        ok: false,
+        reason: `path "${path}" is in the project's protected configuration set (package.json, tsconfig, lockfiles, etc.) and is not named in the task — refusing to modify`,
+      };
+    }
+  }
+  // Whitelist enforcement only when the task names at least one path.
+  if (policy.allowed.size > 0 && !policy.allowed.has(path)) {
+    return {
+      ok: false,
+      reason: `path "${path}" is not named in the task description — only [${[...policy.allowed].join(', ')}] are in scope. If you really need to touch this file, the operator must add it to the task.`,
+    };
+  }
+  return { ok: true };
+}
+
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: 'function',
@@ -131,7 +212,13 @@ Rules:
 - For Fastify: hooks take (request, reply) only — no payload/done/next. Use reply.elapsedTime for request duration. Use app.addHook("onResponse", ...) for response logging (not onRequest).
 - Test files are NOT your responsibility for production-code steps. The TesterAgent runs separately. Do not edit __tests__/ files unless the step explicitly says to.
 
-Output format: tool calls only. When you have nothing more to do, call done().`;
+SCOPE DISCIPLINE:
+- Write only to paths the task description names. read_file is always free.
+- If the dispatcher rejects a write ("path X is not named in the task"), the path you tried isn't in scope — focus the change on a path that IS in scope, or proceed without that auxiliary edit. The user-message at the start lists "Allowed write targets" explicitly. Use those.
+- Don't touch project configuration (package.json, tsconfig.json, vitest config, lockfiles, .env) unless the task literally names them.
+- You MUST complete the substantive change requested in the task. Calling done() without making any of the requested edits is wrong unless the task is genuinely a no-op.
+
+Output format: tool calls only. When you have completed the task, call done().`;
 
 /**
  * Result of executing a single tool call against the WorkingSet.
@@ -143,7 +230,20 @@ interface ToolDispatchResult {
   done: boolean;
 }
 
-export function dispatchToolCall(call: ToolCall, ws: WorkingSet): ToolDispatchResult {
+/**
+ * Default policy used by tests / call sites that don't enforce scope. The
+ * Agent supplies a real policy derived from the task description.
+ */
+const PERMISSIVE_POLICY: WritePolicy = {
+  allowed: new Set(),
+  forbiddenPatterns: [],
+};
+
+export function dispatchToolCall(
+  call: ToolCall,
+  ws: WorkingSet,
+  policy: WritePolicy = PERMISSIVE_POLICY,
+): ToolDispatchResult {
   const { name, arguments: args } = call.function;
   switch (name) {
     case 'read_file': {
@@ -167,6 +267,8 @@ export function dispatchToolCall(call: ToolCall, ws: WorkingSet): ToolDispatchRe
       if (!Number.isInteger(startLine) || !Number.isInteger(endLine)) {
         return { text: 'error: start_line and end_line must be integers', done: false };
       }
+      const allow = isWriteAllowed(filePath, policy);
+      if (!allow.ok) return { text: `error: ${allow.reason}`, done: false };
       const r = ws.replace(filePath, startLine, endLine, newText);
       if (!r.ok) return { text: `error: ${r.error}`, done: false };
       return {
@@ -178,6 +280,8 @@ export function dispatchToolCall(call: ToolCall, ws: WorkingSet): ToolDispatchRe
       const filePath = String(args.path ?? '');
       const content = typeof args.content === 'string' ? args.content : '';
       if (!filePath) return { text: 'error: create_file requires "path"', done: false };
+      const allow = isWriteAllowed(filePath, policy);
+      if (!allow.ok) return { text: `error: ${allow.reason}`, done: false };
       const r = ws.create(filePath, content);
       if (!r.ok) return { text: `error: ${r.error}`, done: false };
       return { text: `ok: created ${filePath}`, done: false };
@@ -185,6 +289,8 @@ export function dispatchToolCall(call: ToolCall, ws: WorkingSet): ToolDispatchRe
     case 'delete_file': {
       const filePath = String(args.path ?? '');
       if (!filePath) return { text: 'error: delete_file requires "path"', done: false };
+      const allow = isWriteAllowed(filePath, policy);
+      if (!allow.ok) return { text: `error: ${allow.reason}`, done: false };
       const r = ws.delete(filePath);
       if (!r.ok) return { text: `error: ${r.error}`, done: false };
       return { text: `ok: deleted ${filePath}`, done: false };
@@ -214,12 +320,30 @@ export class ToolCallingCoderAgent {
     onFileReady?: FileReadyCallback,
   ): Promise<CoderOutput> {
     const ws = new WorkingSet(projectRoot);
+
+    // Build the write policy from the step description. Anything the operator
+    // mentions by path is in scope; everything else (especially configs) is
+    // refused at dispatch time. This is the v1.30.1 fix for scope creep
+    // observed on the v1.30 rag-system benchmark (model wiped package.json
+    // and created untracked vitest-setup.ts on tasks that named neither).
+    const allowed = extractAllowedPaths(stepDescription);
+    const policy: WritePolicy = {
+      allowed,
+      forbiddenPatterns: ALWAYS_FORBIDDEN_PATTERNS,
+    };
+
+    const scopeLine =
+      allowed.size > 0
+        ? `Allowed write targets (only these): ${[...allowed].join(', ')}`
+        : `Allowed write targets: any file (no explicit paths in task)`;
+
     const messages: ToolLoopMessage[] = [
       { role: 'system', content: SYSTEM_PROMPT },
       {
         role: 'user',
         content:
           `Step: ${stepDescription}\n\n` +
+          `${scopeLine}\n\n` +
           `Project context:\n${context}\n\n` +
           `Now perform the change by calling tools. Always read_file before replace_in_file. Call done() when finished.`,
       },
@@ -252,7 +376,7 @@ export class ToolCallingCoderAgent {
       messages.push({ role: 'assistant', content: response.content, tool_calls: calls });
 
       for (const call of calls) {
-        const result = dispatchToolCall(call, ws);
+        const result = dispatchToolCall(call, ws, policy);
         toolCallsExecuted++;
         messages.push({ role: 'tool', content: result.text, tool_name: call.function.name });
 

@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.30 — tool-calling Coder; 254/254 unit-тестов; **v1.29 ceiling сломан** — atomic edits на 91-файловом проекте landящ корректно (server.ts /version perfect surgical diff vs v1.29 0/10). Новый failure mode: scope creep. Default `TOOL_CALLING_CODER=true`, hardening в v1.30.1.  
+**Статус проекта**: 🟢 v1.30.1 — scope discipline для tool-calling Coder; 268/268 unit-тестов; **v1.30 collateral damage устранён** (tool-calling Coder теперь пишет ТОЛЬКО в paths, явно названные в task'е). Следующий: v1.30.2 (Reviewer rejects empty output) + v1.30.3 (Fixer migration на tool-calling — patch-based Fixer всё ещё галлюцинирует на scale).  
 **Последнее обновление**: 2026-04-29  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -678,17 +678,54 @@ Hypothesis: Architect/Reviewer/Tester не нуждаются в full source —
 
 **Подробный run-файл:** [docs/benchmarks/runs/2026-04-29-v1.30-tool-calling-coder.md](docs/benchmarks/runs/2026-04-29-v1.30-tool-calling-coder.md)
 
-#### v1.30.1 — Scope discipline в tool-calling Coder (🔴 next, ~3-4 часа)
-- [ ] System prompt: explicit "files you may touch" list, derived from paths mentioned в task description. Refuse `create_file`/`replace_in_file` для unrelated paths
-- [ ] Hardcoded forbidden_paths: `package.json`, `package-lock.json`, `tsconfig.json`, vitest configs — модель должна explicitly request разрешения
-- [ ] Re-run /version + getSize после fix — expect both to commit cleanly
-- [ ] **Атакует:** scope creep наблюдённый в v1.30 (package.json wipe, untracked vitest-setup.ts)
+#### v1.30.1 — Scope discipline в tool-calling Coder (✅ реализовано)
+
+**Цель:** Лечит scope creep failure mode из v1.30 — модель писала в `package.json` (wipe) и создавала unrelated `vitest-setup.ts`. Теперь dispatcher enforce'ит, что Coder может писать только в paths, явно упомянутые в task description.
+
+- [x] [packages/agents/src/tool-calling-coder.ts](packages/agents/src/tool-calling-coder.ts):
+  - `extractAllowedPaths(taskDescription)` — regex picks paths с known source extensions (TS/JS/JSON/Python/Rust/Go/MD/etc.); strips quotes/parens/leading-`./`. **Critical regex bug fixed**: alternation `js|json` left-to-right, `.json` matched `.js` prefix → added `\b` word-boundary
+  - `ALWAYS_FORBIDDEN_PATTERNS` — package.json, lockfiles, tsconfig, vitest/jest configs, .env, turbo.json, .gitignore. Operator opt-in: если task explicitly names — bypass forbidden
+  - `WritePolicy { allowed, forbiddenPatterns }` + `isWriteAllowed(path, policy)` helper
+  - `dispatchToolCall(call, ws, policy)` — read_file unrestricted; replace_in_file/create_file/delete_file проходят policy. На rejection — `error: path "X" is not named in the task — only [...] are in scope` → tool message → модель адаптируется
+  - `ToolCallingCoderAgent` строит policy из step description; первое сообщение модели включает `Allowed write targets: ...` явный list
+- [x] System prompt rewrite (took 2 passes):
+  - First pass был too strong ("REJECTED" + "Stop, ... or call done() with no changes") → модель сдавалась с 0 file changes (deterministic на двух runs)
+  - Second pass softened: "focus your work on a path that IS in scope ... Calling done() without making any of the requested edits is wrong unless task is genuinely no-op"
+- [x] 14 новых unit-тестов: extractAllowedPaths (6), isWriteAllowed (2), dispatcher policy enforcement (6) → 25/25 в файле, 268/268 общая
+- [x] 12/12 пакетов собрались
+
+**Бенчмарк-проверка на rag-system-target (`/version` в `packages/api/src/server.ts`):**
+
+| Iteration | What Coder produced | Scope creep | Score |
+|---|---|---|---|
+| v1.29 patch-based | nothing (5 search-not-found cascades) | n/a | 0/10 |
+| v1.30 tool-calling no policy | server.ts surgical edit | **package.json wiped, vitest-setup.ts created** | 5.2/10 |
+| **v1.30.1 + policy** | server.ts edit (cargo-culted /health body — model comprehension issue) | **none — only server.ts touched** | 5.0/10 |
+
+**Главный win v1.30.1:** **scope creep устранён**. Та же task на v1.30 затрагивала 3 файла включая wiped package.json; на v1.30.1 — ТОЛЬКО `packages/api/src/server.ts`. Policy enforcement верифицирован прямым сравнением.
+
+**Surfaced findings (v1.30.2 + v1.30.3 targets):**
+- **Coder cargo-culting:** /version вернул `{status, ollama, uptime}` (handler /health скопирован) вместо `{version: '1.0.0'}`. Model comprehension bug, не scope. Кандидат на prompt fix
+- **Patch-based validation Fixer не имеет policy** — кикнул'ся когда Coder edit прошёл, попытался "fix" путём writing `from 'jest'` patches к unrelated test files (search-not-found cascade — same v1.29 failure mode). Нужна migration на tool-calling: **v1.30.3**
+- **Reviewer approves empty Coder output** — first run Coder выдал 0 changes, Reviewer одобрил. **v1.30.2** target
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-29-v1.30.1-scope-discipline.md](docs/benchmarks/runs/2026-04-29-v1.30.1-scope-discipline.md)
 
 #### v1.30.2 — Reviewer rejects empty Coder output (~1 час)
 - [ ] Если codeChanges.files.length === 0 — Reviewer возвращает `isApproved: false` с issue "Coder produced no file changes for the requested step"
 - [ ] **Атакует:** v1.30 sandbox first run где Coder произвёл 0 файлов и Reviewer одобрил
 
-#### v1.30.3 (опционально) — Verify-syntax tool в tool-calling Coder (~2-3 часа)
+#### v1.30.3 — Fixer migration to tool-calling (🔴 urgent после v1.30.1 findings, ~3-5 часов)
+
+**Корневая проблема:** Coder теперь tool-calling (v1.30) с scope policy (v1.30.1), но **patch-based Fixer всё ещё активен** в `runValidationLoop`. На rag-system-target v1.30.1 surface'ился классический v1.29 failure mode у Fixer'a: галлюцинирует `{search: "import ... from 'jest'", replace: "..."}` blocks для тестов где этот import не существует — search-not-found cascade. Policy не применяется к Fixer'у.
+
+- [ ] Создать `ToolCallingFixerAgent` — переиспользуя WorkingSet + dispatcher + policy infrastructure из v1.30
+- [ ] Fixer-flavored system prompt: focus on minimal edit для validation issue, restore missing imports, не удалять call sites
+- [ ] Policy для Fixer: derived from currently failing files + paths from issues; `forbidden` patterns те же
+- [ ] Switch flag в config (или единый `TOOL_CALLING_AGENTS=true`)
+- [ ] Re-run rag-system bench — expect search-not-found cascade в Fixer'е исчезнет
+
+#### v1.30.4 (опционально) — Verify-syntax tool в tool-calling Coder (~2-3 часа)
 - [ ] После `replace_in_file`, WorkingSet делает brace-balance check файла; если unbalanced → return warning в tool result, модель retry'ит
 - [ ] **Атакует:** structural placement error в getSize (метод вне класса)
 
