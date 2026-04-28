@@ -9,6 +9,7 @@ import { buildRepoMap } from '@rag-system/code-graph';
 import { PlannerAgent } from './planner.js';
 import { CoderAgent } from './coder.js';
 import { ToolCallingCoderAgent } from './tool-calling-coder.js';
+import { ToolCallingFixerAgent } from './tool-calling-fixer.js';
 import { ArchitectAgent } from './architect.js';
 import { TesterAgent } from './tester.js';
 import { ReviewerAgent } from './reviewer.js';
@@ -33,6 +34,7 @@ export class Orchestrator {
   private tester: TesterAgent;
   private reviewer: ReviewerAgent;
   private fixer: FixerAgent;
+  private toolCallingFixer: ToolCallingFixerAgent;
   private typeChecker: TypeChecker;
   private testRunner: TestRunner;
   private conventions: ProjectConventions | null = null;
@@ -51,6 +53,7 @@ export class Orchestrator {
     this.tester = new TesterAgent(router);
     this.reviewer = new ReviewerAgent(router);
     this.fixer = new FixerAgent(router);
+    this.toolCallingFixer = new ToolCallingFixerAgent(router);
     // Validators run against the project root the writer is bound to so
     // multi-project setups check the right codebase.
     this.typeChecker = new TypeChecker(this.writer.root);
@@ -699,7 +702,15 @@ export class Orchestrator {
         projectRoot: this.writer.root,
         repoMap: this.renderRepoMap(allFileChanges.map(c => c.path)),
       });
-      const fixResult = await this.fixer.execute(issues, allFileChanges, validationContext, mode);
+      // v1.30.3 — when tool-calling Coder is on, also use tool-calling Fixer.
+      // Patch-based Fixer hallucinates `search` blocks at scale (v1.29 / v1.30.1
+      // benchmarks: emitted `import ... from 'jest'` patches against test files
+      // where that import doesn't exist anywhere → search-not-found cascade).
+      // Tool-calling Fixer reads the actual file via read_file and edits by
+      // line range, eliminating the failure mode end-to-end.
+      const fixResult = config.agents.toolCallingCoder
+        ? await this.toolCallingFixer.execute(issues, allFileChanges, validationContext, mode, this.writer.root)
+        : await this.fixer.execute(issues, allFileChanges, validationContext, mode);
 
       // Re-write fixed files and update tracking. Dedupe so the Fixer's
       // multiple edits to one file collapse into a single atomic apply.

@@ -11,6 +11,7 @@ export {
   TOOL_DEFINITIONS,
 } from './tool-calling-coder.js';
 export type { WritePolicy } from './tool-calling-coder.js';
+export { ToolCallingFixerAgent, buildFixerAllowedSet } from './tool-calling-fixer.js';
 export { WorkingSet } from './working-set.js';
 export { ArchitectAgent } from './architect.js';
 export type { ArchitectOutput } from './architect.js';
