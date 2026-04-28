@@ -148,7 +148,7 @@ describe('buildRepoMap', () => {
 
     // Tight budget — fits only a handful.
     const map = buildRepoMap(graph, root, { maxBytes: 200 });
-    expect(map).toMatch(/more files? omitted/);
+    expect(map).toMatch(/more production files? omitted/);
     expect(map.length).toBeLessThan(400); // sanity ceiling
   });
 
@@ -171,7 +171,7 @@ describe('buildRepoMap', () => {
     expect(map).toContain('src/server.ts:');
     expect(map).toContain('doMany');
     // Tail file fell off; footer announces the omission.
-    expect(map).toMatch(/more files? omitted/);
+    expect(map).toMatch(/more production files? omitted/);
     expect(map).not.toContain('src/util.ts:');
   });
 
@@ -252,5 +252,97 @@ describe('buildRepoMap', () => {
     for (const ml of methodLines) {
       expect(ml).not.toMatch(/^\s+(if|for|while|switch|return)\(/);
     }
+  });
+
+  // v1.29.1 — production sources rank ahead of test files; section headers
+  // appear when both groups are present. v1.29 scale benchmark surfaced the
+  // opposite default (alphabetic sort puts __tests__/ near production code in
+  // the same package), causing scope-creep into test files.
+  describe('production / test split', () => {
+    it('orders production files before test files and adds section headers', () => {
+      const root = PROJECT_ROOT;
+      const prod = path.join(root, 'packages/agents/src/orchestrator.ts');
+      const test = path.join(root, 'packages/agents/src/__tests__/orchestrator.test.ts');
+      const graph = makeGraph({
+        [prod]: [
+          makeSymbol({
+            name: 'Orchestrator',
+            kind: 'class',
+            filePath: prod,
+            text: 'export class Orchestrator {\n  runTask(): void {}\n}',
+          }),
+        ],
+        [test]: [
+          makeSymbol({
+            name: 'orchestratorMock',
+            kind: 'function',
+            filePath: test,
+            text: 'export function orchestratorMock(): void {}',
+          }),
+        ],
+      });
+
+      const map = buildRepoMap(graph, root);
+      const idxProdHeader = map.indexOf('## Production sources');
+      const idxTestHeader = map.indexOf('## Tests');
+      const idxProdFile = map.indexOf('packages/agents/src/orchestrator.ts:');
+      const idxTestFile = map.indexOf('packages/agents/src/__tests__/orchestrator.test.ts:');
+
+      expect(idxProdHeader).toBeGreaterThanOrEqual(0);
+      expect(idxTestHeader).toBeGreaterThan(idxProdHeader);
+      expect(idxProdFile).toBeGreaterThan(idxProdHeader);
+      expect(idxProdFile).toBeLessThan(idxTestHeader);
+      expect(idxTestFile).toBeGreaterThan(idxTestHeader);
+    });
+
+    it('omits section headers when only one of the two groups has entries', () => {
+      const prod = path.join(PROJECT_ROOT, 'src/util.ts');
+      const graph = makeGraph({
+        [prod]: [makeSymbol({ name: 'helper', kind: 'function', filePath: prod, text: 'export function helper(): void {}' })],
+      });
+
+      const map = buildRepoMap(graph, PROJECT_ROOT);
+      expect(map).not.toContain('## Production sources');
+      expect(map).not.toContain('## Tests');
+      expect(map).toContain('src/util.ts:');
+    });
+
+    it('truncates tests first when budget is tight, keeping production visible', () => {
+      const root = PROJECT_ROOT;
+      const prod = path.join(root, 'src/main.ts');
+      const test = path.join(root, 'src/__tests__/main.test.ts');
+      const graph = makeGraph({
+        [prod]: [makeSymbol({ name: 'main', kind: 'function', filePath: prod, text: 'export function main(): void {}' })],
+        [test]: [makeSymbol({ name: 'mainTest', kind: 'function', filePath: test, text: 'export function mainTest(): void {}' })],
+      });
+
+      // Just enough budget for production but not test.
+      const map = buildRepoMap(graph, root, { maxBytes: 80 });
+      expect(map).toContain('src/main.ts:');
+      expect(map).not.toContain('src/__tests__/main.test.ts:');
+      expect(map).toMatch(/test files? omitted/);
+    });
+
+    it('detects .spec. and .test. naming conventions, not just __tests__/', () => {
+      const root = PROJECT_ROOT;
+      const a = path.join(root, 'src/foo.test.ts');
+      const b = path.join(root, 'src/bar.spec.ts');
+      const c = path.join(root, 'src/foo.ts');
+      const graph = makeGraph({
+        [a]: [makeSymbol({ name: 'fooTest', kind: 'function', filePath: a, text: 'export function fooTest(): void {}' })],
+        [b]: [makeSymbol({ name: 'barSpec', kind: 'function', filePath: b, text: 'export function barSpec(): void {}' })],
+        [c]: [makeSymbol({ name: 'foo', kind: 'function', filePath: c, text: 'export function foo(): void {}' })],
+      });
+
+      const map = buildRepoMap(graph, root);
+      const idxFooProd = map.indexOf('src/foo.ts:');
+      const idxFooTest = map.indexOf('src/foo.test.ts:');
+      const idxBarSpec = map.indexOf('src/bar.spec.ts:');
+
+      // Production foo.ts must precede the .test/.spec siblings.
+      expect(idxFooProd).toBeGreaterThan(0);
+      expect(idxFooProd).toBeLessThan(idxFooTest);
+      expect(idxFooProd).toBeLessThan(idxBarSpec);
+    });
   });
 });

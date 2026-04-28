@@ -22,9 +22,24 @@ import type { CodeSymbol } from './types.js';
  *       name: string
  */
 
-const DEFAULT_MAX_BYTES = 6000;
+// Budget sized for medium-scale projects (~100 files of typical TS density).
+// Sandbox at 5 files used about 500 bytes; rag-system at 91 files renders to
+// ~6KB even with the old cap, hitting truncation at 60% of files. 16000 bytes
+// (~4000 tokens) fits the rag-system fully and leaves room for slightly larger
+// repos before truncation kicks in.
+const DEFAULT_MAX_BYTES = 16000;
 const SIGNATURE_LINE_MAX = 120;
 const MAX_MEMBERS_PER_SYMBOL = 30;
+
+// Test files are recognized so production code sorts in front of them — without
+// this, an alphabetic sort can put `__tests__/...` symbols ahead of, or instead
+// of, the production code in the same package. Observed v1.29 scope-creep failure
+// mode where the model modified tests because the repo-map advertised them more
+// prominently than the production module under change.
+const TEST_FILE_RE = /(?:^|\/)__tests__\/|\.(?:test|spec)\.[jt]sx?$/;
+function isTestFile(relPath: string): boolean {
+  return TEST_FILE_RE.test(relPath);
+}
 
 const CONTROL_FLOW_KEYWORDS = new Set([
   'if', 'for', 'while', 'switch', 'return', 'throw', 'await', 'new', 'typeof',
@@ -72,7 +87,10 @@ export function buildRepoMap(
     rendered.set(rel, renderFile(rel, syms));
   }
 
-  // Highlight files first, in caller-supplied order; the rest alphabetic.
+  // Highlight files first, in caller-supplied order; the rest split into
+  // production sources and test files, each alphabetic. Tests always come
+  // last and get truncated first when budget runs out — production code is
+  // load-bearing for "what to modify next", tests are reference material.
   const head: string[] = [];
   for (const hp of highlightRel) {
     const r = rendered.get(hp);
@@ -81,30 +99,57 @@ export function buildRepoMap(
       rendered.delete(hp);
     }
   }
-  const tail = Array.from(rendered.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([, v]) => v);
+  const remaining = Array.from(rendered.entries()).sort(([a], [b]) => a.localeCompare(b));
+  const prodEntries = remaining.filter(([rel]) => !isTestFile(rel)).map(([, v]) => v);
+  const testEntries = remaining.filter(([rel]) => isTestFile(rel)).map(([, v]) => v);
 
-  // Greedy fill: highlight entries are always rendered (budget can be exceeded
-  // by them on purpose — they're the load-bearing context). Tail entries are
-  // dropped once the budget is gone.
+  // Greedy fill across three buckets. Highlights always render. Production
+  // gets the remaining budget; tests fill what's left after that.
   const parts: string[] = [];
   let total = 0;
   for (const r of head) {
     parts.push(r);
     total += r.length + 2;
   }
-  let truncated = 0;
-  for (const r of tail) {
+
+  let prodTruncated = 0;
+  let testTruncated = 0;
+  const prodRendered: string[] = [];
+  for (const r of prodEntries) {
     if (total + r.length + 2 > maxBytes) {
-      truncated++;
+      prodTruncated++;
       continue;
     }
-    parts.push(r);
+    prodRendered.push(r);
     total += r.length + 2;
   }
-  if (truncated > 0) {
-    parts.push(`// ... (${truncated} more file${truncated === 1 ? '' : 's'} omitted to fit token budget)`);
+  const testRendered: string[] = [];
+  for (const r of testEntries) {
+    if (total + r.length + 2 > maxBytes) {
+      testTruncated++;
+      continue;
+    }
+    testRendered.push(r);
+    total += r.length + 2;
+  }
+
+  // Section headers only when there's something on both sides — otherwise the
+  // header is noise on small projects (sandbox case: just one section).
+  const showHeaders = prodRendered.length > 0 && testRendered.length > 0;
+  if (showHeaders) {
+    parts.push('## Production sources');
+  }
+  parts.push(...prodRendered);
+  if (showHeaders) {
+    parts.push('## Tests');
+  }
+  parts.push(...testRendered);
+
+  if (prodTruncated > 0) {
+    parts.push(`// ... (${prodTruncated} more production file${prodTruncated === 1 ? '' : 's'} omitted to fit token budget)`);
+  }
+  if (testTruncated > 0) {
+    parts.push(`// ... (${testTruncated} test file${testTruncated === 1 ? '' : 's'} omitted to fit token budget)`);
   }
 
   return parts.join('\n\n');

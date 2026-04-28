@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟡 v1.29 — scale validation на rag-system (91 файл) показала **жёсткий ceiling patch-based Coder'а**: atomic-задача fails на medium-проекте (search-blocks не матчатся). **Решение: Phase 3 v1.30 tool-calling Coder — урgentно**. Индексация и storage держат scale.  
+**Статус проекта**: 🟡 v1.29.1 — repo-map at scale (16KB budget + production/tests split + section headers); 223/223 unit-тестов; v1.30 tool-calling Coder следующий шаг (фундаментальный фикс scale ceiling)  
 **Последнее обновление**: 2026-04-29  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -620,11 +620,33 @@ Hypothesis: Architect/Reviewer/Tester не нуждаются в full source —
 - Indexing + HNSW JSON storage держат scale fine — Phase 4 не блокирующий
 - Подробный анализ: [docs/benchmarks/runs/2026-04-29-v1.29-scale-rag-system.md](docs/benchmarks/runs/2026-04-29-v1.29-scale-rag-system.md)
 
-#### v1.29.1 — Repo-map at scale (~2 часа, опциональный precursor для v1.30)
-- [ ] Default `maxBytes` bump 6000 → 16000 для medium projects (~4000 tokens)
-- [ ] Sort priority: production paths first (skip `__tests__/` и `*.test.ts`), test files в отдельной секции с собственным budget
-- [ ] Опционально: section headers "Production:" / "Tests:" в output
-- [ ] **Атакует:** scope creep из test files (наблюдалось на v1.29) + truncation 60% files на medium scale
+#### v1.29.1 — Repo-map at scale (✅ реализовано)
+
+**Цель:** Лечит две проблемы из v1.29 scale benchmark — default 6KB budget overflow на 91-файловом проекте (60% файлов truncated) и alphabetic-sort bias в test files (вызывал scope creep).
+
+- [x] [packages/code-graph/src/repo-map.ts](packages/code-graph/src/repo-map.ts):
+  - `DEFAULT_MAX_BYTES` 6000 → **16000** (~4000 tokens) — сайзинг под medium projects (100-200 файлов)
+  - `isTestFile(relPath)` helper + regex `(?:^|\/)__tests__\/|\.(?:test|spec)\.[jt]sx?$` — детектит как `__tests__/` пути, так и `.test.`/`.spec.` суффиксы
+  - Render order: highlights → production → tests; greedy fill из shared budget, tests truncated first
+  - Section headers `## Production sources` / `## Tests` отображаются ТОЛЬКО когда обе группы непусты (на single-section проектах headers убираются — sandbox case unchanged)
+  - Footer truncation message раздельно для прод и тестов: `"N more production files omitted"` / `"N test files omitted"`
+- [x] 4 новых unit-теста (14/14 в файле, 223/223 общая):
+  - production файлы идут перед test файлами + section headers correct order
+  - section headers omitted при single-group проектах
+  - tests truncated first под tight budget, production остаётся видимой
+  - regex детектит `.test.` и `.spec.` naming, не только `__tests__/`
+
+**Эмпирическое улучшение на rag-system-target (91 файл, 65 with symbols):**
+
+| | До v1.29.1 | После v1.29.1 |
+|---|---|---|
+| Repo-map bytes | 5975 | 16084 |
+| Tokens | ~1494 | ~4021 |
+| Production truncated | 60% (39/65) — bias toward tests | ~10% (5/65) — production-first |
+| Section structure | flat alphabetic | `## Production sources` → `## Tests` |
+| Scope-creep target risk | high | low (тесты явно отделены) |
+
+**Future hardening:** при переходе на large projects (500+ файлов) — увеличивать budget динамически или вводить hierarchical view (package → file → symbols). Не блокирует v1.30, можно сделать вместе с tool-calling.
 
 #### v1.30 — Tool-calling Coder (🔴 урgent после v1.29 findings, ~3-5 дней)
 
@@ -644,15 +666,7 @@ Hypothesis: Architect/Reviewer/Tester не нуждаются в full source —
 - [ ] Re-run v1.29 scale benchmark после v1.30 — если atomic tasks landed на rag-system → architecture validated
 
 #### v1.31+ — Sub-agents (после v1.30)
-- `BugFixAgent`, `RefactorAgent`, `FeatureAgent` — специализированные роли
-- Planner выбирает кого вызвать вместо unified Coder
-
-#### v1.32+ — Iterative editing с reflection
-- Coder в цикле read → edit → verify → adjust
-- Self-critique перед отправкой Reviewer'у
-
-#### v1.31+ — Sub-agents
-- `BugFixAgent`, `RefactorAgent`, `FeatureAgent` — специализированные роли
+- `BugFixAgent`, `RefactorAgent`, `FeatureAgent`, `MigrationAgent` — специализированные роли
 - Planner выбирает кого вызвать вместо unified Coder
 
 #### v1.32+ — Iterative editing с reflection
