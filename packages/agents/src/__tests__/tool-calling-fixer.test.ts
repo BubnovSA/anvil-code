@@ -319,6 +319,50 @@ describe('ToolCallingFixerAgent.execute — no-tool-calls retry (v1.32-a.3)', ()
   });
 });
 
+// v1.32-a.5 — pathology guard symmetric with Coder's. When Fixer spins on
+// the same (tool + path) tuple with repeated errors, after PATHOLOGY_THRESHOLD
+// consecutive same-fingerprint errors it gets a strategy nudge; after
+// MAX_PATHOLOGY_STRIKES strikes the loop hard-bails.
+describe('ToolCallingFixerAgent.execute — pathology guard (v1.32-a.5)', () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fixer-pathology-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('hard-bails Fixer loop after MAX_PATHOLOGY_STRIKES same-fingerprint cycles', async () => {
+    let count = 0;
+    const router = {
+      routeWithTools: async () => {
+        count++;
+        return {
+          content: '',
+          toolCalls: [{
+            function: {
+              name: 'replace_in_file',
+              arguments: { path: 'src/missing.ts', start_line: 1, end_line: 1, new_text: 'X' },
+            },
+          }],
+          model: 'fake',
+        };
+      },
+    } as never;
+
+    const { PATHOLOGY_THRESHOLD, MAX_PATHOLOGY_STRIKES } = await import('../tool-calling-coder.js');
+    const agent = new ToolCallingFixerAgent(router);
+    await agent.execute(
+      ['src/missing.ts:1: TS2304'],
+      [{ action: 'create', path: 'src/missing.ts', content: 'x' }],
+      'context',
+      'balanced',
+      tmpDir,
+    );
+    expect(count).toBe(PATHOLOGY_THRESHOLD * MAX_PATHOLOGY_STRIKES);
+  });
+});
+
 describe('pruneHistory', () => {
   function makeRound(i: number): ToolLoopMessage[] {
     return [

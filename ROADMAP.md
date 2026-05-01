@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.32-a.4 — L4.1 robustness validated. **5/5 commits landed** на 5 последовательных runs идентичного bug-inject baseline. 0 Fixer-bails, 0 destructive failures, 100% bug semantically fixed. Diff quality variance: 1/5 byte-perfect, 4/5 cosmetic style noise (operator-cleanable). Wall-time median 6 min, p90 ~17 min, max 58 min (Coder loop pathology — independent issue). **v1.31.2 → v1.32-a.4 arc decisively closed**: operator-grade bug-fix workflow stable. 387/387 unit-tests. Next: v1.32-a.5 (Coder loop guard, ~2-3h) → v1.32-c sub-agents (Phase 3 closure) → Phase 4.  
+**Статус проекта**: 🟢 v1.32-a.5 — Coder/Fixer pathology guard validated. После v1.32-a.4 58-min outlier'a (Coder spinning на same-fingerprint errors), guard detects N=5 consecutive same `tool:path` errors → push strategy nudge → MAX=2 strikes → hard bail. L4.1 re-run ×3: pathology fired correctly (run #1, wall 23 min vs 58 min без guard — **2.5× faster failure signal**), healthy run unaffected (run #3, byte-perfect, 6 min), 1 Ollama infra crash (не v1.32-a.5 issue). 392/392 unit-tests (+5). **Phase 3 closure path visible**: next v1.32-c sub-agents (~1 неделя) = architectural closure → Phase 4 storage + backend.  
 **Последнее обновление**: 2026-04-30  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -1155,6 +1155,37 @@ v1.32-a.2 commit-aggregation finally получает end-to-end demonstration �
 После Phase 3 → Phase 4 (Qdrant + SQLite symbol table + опц. llama.cpp direct backend с grammar-constrained tool calls).
 
 **Detailed run-file:** [docs/benchmarks/runs/2026-04-30-v1.32-a.4-l4.1-robustness.md](docs/benchmarks/runs/2026-04-30-v1.32-a.4-l4.1-robustness.md)
+
+#### v1.32-a.5 — Coder/Fixer pathology guard (✅ реализовано + validated)
+
+**Цель:** v1.32-a.4 robustness bench выявил 58-min outlier (run #1) — Coder spinning на near-identical replace_in_file calls которые brace-balance rolled back. Bound wall-time на доомированных runs через detection "stuck on same (tool + path) tuple with repeated errors".
+
+- [x] [tool-calling-coder.ts](packages/agents/src/tool-calling-coder.ts) — exported constants `PATHOLOGY_THRESHOLD = 5`, `MAX_PATHOLOGY_STRIKES = 2`, `FILE_ARG_KEY`. Логика: после tool result starting `error:`, fingerprint = `tool_name:path-or-file`. Match с lastErrorFingerprint → consecutiveSameToolErrors++. После THRESHOLD same → push strategy nudge ("change strategy: re-read, structural tool, done()"), reset counter, increment strike. После MAX_STRIKES → log warn + pathologyBail = true, break inner+outer
+- [x] [tool-calling-fixer.ts](packages/agents/src/tool-calling-fixer.ts) — symmetric implementation, reuses constants from coder
+- [x] **+5 unit-тестов** (4 Coder + 1 Fixer): nudge fires after THRESHOLD, hard-bail after MAX_STRIKES, success resets counter, different fingerprint resets counter, Fixer mirrors Coder. **392/392 общая** (+5)
+
+**L4.1 re-run ×3:**
+
+| Run | Status | Pathology | Wall | Result |
+|---|---|---|---|---|
+| #1 | completed | **YES (Fixer)** — fingerprint `replace_in_file:src/services/user-service.ts`, bail at 14 calls | **~23 min** ✓ bounded vs 58-min v1.32-a.4 outlier | commit_skipped |
+| #2 | failed | n/a — Ollama "fetch failed" infra crash | ~5 min | — (не v1.32-a.5 issue) |
+| #3 | completed | no | **~6 min** | ✓ commit landed (84adc85), **byte-perfect diff** identical к v1.32-a.4 run #4 |
+
+**Validation:**
+- ✓ Guard fires correctly when pathology real (run #1)
+- ✓ Healthy runs unaffected (run #3)
+- ✓ Wall-time bounded 23 min vs 58 min — **2.5× faster failure signal**
+
+**Trade-off accepted:** small fraction runs that *would have* eventually fixed bug после 50+ calls now bail at 10. Wall-time savings on dominant failure mode outweigh it. Operator получает faster signal.
+
+**Phase 3 closure path visible:**
+
+- **v1.32-a.6** (опц., ~1h) — `prettier --write` post-step → cosmetic v1.32-a.4 minor-style runs become byte-perfect
+- **v1.32-c** (~1 неделя, **next priority**) — sub-agents (BugFixAgent / RefactorAgent / FeatureAgent) на v1.31 primitives = **Phase 3 architectural closure**
+- После — Phase 4 (Qdrant, SQLite symbol table, опц. llama.cpp direct backend с grammar-constrained tool calls — addresses pathology конструктивно)
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-30-v1.32-a.5-pathology-guard.md](docs/benchmarks/runs/2026-04-30-v1.32-a.5-pathology-guard.md)
 
 #### v1.30.6 (опционально) — Duplicate-content detection (~2-3 часа)
 

@@ -10,6 +10,7 @@ import {
   checkBraceBalance,
 } from '../tool-calling-coder.js';
 import type { WritePolicy } from '../tool-calling-coder.js';
+import type { ToolLoopMessage } from '@rag-system/model-router';
 import { WorkingSet } from '../working-set.js';
 
 describe('TOOL_DEFINITIONS', () => {
@@ -1190,5 +1191,139 @@ describe('ToolCallingCoderAgent.execute — no-tool-calls retry (v1.32-a.3)', ()
     // Coder only read; no edits. Key property: the loop didn't bail at the
     // first text-only response — the read_file in round 2 was reached.
     expect(result.files).toEqual([]);
+  });
+});
+
+// v1.32-a.5 — pathology guard: detect "stuck on same (tool + path) tuple
+// with repeated errors" and break early. Surfaced by L4.1 v1.32-a.4 run #1
+// where Coder spent 58 minutes retrying near-identical replace_in_file
+// calls that brace-balance kept rejecting. Tests verify the threshold-based
+// nudge + hard-bail logic.
+describe('ToolCallingCoderAgent.execute — pathology guard (v1.32-a.5)', () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-pathology-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // Helper: a router that always emits the same replace_in_file call, which
+  // reliably errors because the target file does not exist on disk. Each
+  // call increments invocations counter; messages snapshot saved to inspect
+  // what nudges the loop pushed between calls.
+  function buildErrorRouter(): { invocations: () => number; messageSnapshots: ToolLoopMessage[][]; router: unknown } {
+    let count = 0;
+    const messageSnapshots: ToolLoopMessage[][] = [];
+    const router = {
+      routeWithTools: async (_role: unknown, msgs: ToolLoopMessage[]) => {
+        count++;
+        messageSnapshots.push([...msgs]);
+        return {
+          content: '',
+          toolCalls: [{
+            function: {
+              name: 'replace_in_file',
+              arguments: { path: 'src/missing.ts', start_line: 1, end_line: 1, new_text: 'X' },
+            },
+          }],
+          model: 'fake',
+        };
+      },
+    } as never;
+    return { invocations: () => count, messageSnapshots, router };
+  }
+
+  it('pushes a strategy nudge after PATHOLOGY_THRESHOLD consecutive same-fingerprint errors', async () => {
+    const { invocations, messageSnapshots, router } = buildErrorRouter();
+    const { ToolCallingCoderAgent, PATHOLOGY_THRESHOLD } = await import('../tool-calling-coder.js');
+    const agent = new ToolCallingCoderAgent(router as never);
+    await agent.execute('try to edit a missing file', 'context', 'balanced', tmpDir);
+
+    // First nudge fires after PATHOLOGY_THRESHOLD errors. The next router
+    // invocation (PATHOLOGY_THRESHOLD + 1 = 6th call) sees the nudge in messages.
+    expect(invocations()).toBeGreaterThanOrEqual(PATHOLOGY_THRESHOLD + 1);
+    const callAfterNudge = messageSnapshots[PATHOLOGY_THRESHOLD]!;
+    const lastUser = [...callAfterNudge].reverse().find(m => m.role === 'user')!;
+    expect(lastUser.content).toMatch(/change strategy/i);
+    expect(lastUser.content).toMatch(/replace_in_file/);
+  });
+
+  it('hard-bails after MAX_PATHOLOGY_STRIKES same-fingerprint cycles', async () => {
+    const { invocations, router } = buildErrorRouter();
+    const { ToolCallingCoderAgent, PATHOLOGY_THRESHOLD, MAX_PATHOLOGY_STRIKES } = await import('../tool-calling-coder.js');
+    const agent = new ToolCallingCoderAgent(router as never);
+    await agent.execute('always errors', 'context', 'balanced', tmpDir);
+
+    // Each strike consumes PATHOLOGY_THRESHOLD calls. After MAX_PATHOLOGY_STRIKES
+    // strikes, the loop bails. Total tool calls = THRESHOLD * MAX_STRIKES (10 by default).
+    const expected = PATHOLOGY_THRESHOLD * MAX_PATHOLOGY_STRIKES;
+    expect(invocations()).toBe(expected);
+  });
+
+  it('a successful tool call resets the consecutive-error counter (model can iterate without triggering pathology)', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'real.ts'), 'export const X = 1;\n');
+
+    // Pattern: every 5th call succeeds; counter resets each time. Pathology
+    // never fires; loop runs to MAX_TOOL_CALLS budget (or hits some other
+    // termination — neither nudge nor bail should fire).
+    let count = 0;
+    const router = {
+      routeWithTools: async () => {
+        count++;
+        const fail = count % 5 !== 0;
+        return {
+          content: '',
+          toolCalls: [{
+            function: fail
+              ? { name: 'replace_in_file', arguments: { path: 'src/missing.ts', start_line: 1, end_line: 1, new_text: 'X' } }
+              : { name: 'read_file', arguments: { path: 'real.ts' } },
+          }],
+          model: 'fake',
+        };
+      },
+    } as never;
+
+    const { ToolCallingCoderAgent } = await import('../tool-calling-coder.js');
+    const agent = new ToolCallingCoderAgent(router);
+    await agent.execute('mixed pattern', 'context', 'balanced', tmpDir);
+
+    // 50 = MAX_TOOL_CALLS budget. If pathology bailed early, count < 50.
+    expect(count).toBe(50);
+  });
+
+  it('a different-fingerprint error resets the counter (alternating files do not trigger pathology)', async () => {
+    // 4 errors on file A, then 4 errors on file B, then 4 on A, ...
+    // Each switch resets the counter; THRESHOLD never reached.
+    let count = 0;
+    const router = {
+      routeWithTools: async () => {
+        count++;
+        const fileA = Math.floor((count - 1) / 4) % 2 === 0;
+        return {
+          content: '',
+          toolCalls: [{
+            function: {
+              name: 'replace_in_file',
+              arguments: {
+                path: fileA ? 'src/a.ts' : 'src/b.ts',
+                start_line: 1,
+                end_line: 1,
+                new_text: 'X',
+              },
+            },
+          }],
+          model: 'fake',
+        };
+      },
+    } as never;
+
+    const { ToolCallingCoderAgent } = await import('../tool-calling-coder.js');
+    const agent = new ToolCallingCoderAgent(router);
+    await agent.execute('alternating bad paths', 'context', 'balanced', tmpDir);
+
+    // No bail because no fingerprint reaches the THRESHOLD; loop runs the
+    // full MAX_TOOL_CALLS budget.
+    expect(count).toBe(50);
   });
 });

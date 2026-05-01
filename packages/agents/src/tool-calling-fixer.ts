@@ -7,6 +7,9 @@ import {
   TOOL_DEFINITIONS,
   dispatchToolCall,
   extractAllowedPaths,
+  FILE_ARG_KEY,
+  PATHOLOGY_THRESHOLD,
+  MAX_PATHOLOGY_STRIKES,
   type WritePolicy,
 } from './tool-calling-coder.js';
 import type { FixerOutput } from './fixer.js';
@@ -253,6 +256,11 @@ export class ToolCallingFixerAgent {
     // permission to bail, which it took ~50% of the time on L4.1. The new
     // nudges remove that escape and tell the model exactly what to call next.
     let consecutiveNoToolCalls = 0;
+    // v1.32-a.5 — symmetric with Coder: same-fingerprint error pathology guard.
+    let consecutiveSameToolErrors = 0;
+    let lastErrorFingerprint = '';
+    let pathologyStrikes = 0;
+    let pathologyBail = false;
 
     for (let round = 0; round < MAX_TOOL_CALLS && !doneCalled; round++) {
       const response = await this.router.routeWithTools(this.role, messages, TOOL_DEFINITIONS, taskMode);
@@ -286,6 +294,44 @@ export class ToolCallingFixerAgent {
         toolCallsExecuted++;
         messages.push({ role: 'tool', content: result.text, tool_name: call.function.name });
 
+        // v1.32-a.5 — pathology guard symmetric with Coder. Same-fingerprint
+        // error streak detection: model spinning on the same (tool + path)
+        // tuple with repeated errors triggers a strategy nudge after K
+        // consecutive errors, hard-bails after 2 such strikes.
+        const isError = result.text.startsWith('error:');
+        if (isError) {
+          const argKey = FILE_ARG_KEY[call.function.name] ?? 'path';
+          const fpPath = String(call.function.arguments[argKey] ?? '');
+          const fp = `${call.function.name}:${fpPath}`;
+          if (fp === lastErrorFingerprint) {
+            consecutiveSameToolErrors++;
+          } else {
+            consecutiveSameToolErrors = 1;
+            lastErrorFingerprint = fp;
+          }
+          if (consecutiveSameToolErrors >= PATHOLOGY_THRESHOLD) {
+            pathologyStrikes++;
+            consecutiveSameToolErrors = 0;
+            lastErrorFingerprint = '';
+            if (pathologyStrikes >= MAX_PATHOLOGY_STRIKES) {
+              logger.warn(
+                { agent: this.name, fingerprint: fp, totalCalls: toolCallsExecuted },
+                'Fixer pathology guard: max strikes reached — bailing',
+              );
+              pathologyBail = true;
+              break;
+            }
+            messages.push({
+              role: 'user',
+              content:
+                `You have called ${call.function.name} on "${fpPath}" ${PATHOLOGY_THRESHOLD} times and gotten the same kind of error each time. The current approach is not working — change strategy. Try one of: (a) read_file the path again to see the current state (line numbers shift after every edit); (b) a different tool — structural ones (add_method / replace_method / add_import) often handle cases where replace_in_file struggles; (c) call done() if you cannot make further progress. Do not retry the same call shape again.`,
+            });
+          }
+        } else {
+          consecutiveSameToolErrors = 0;
+          lastErrorFingerprint = '';
+        }
+
         if (ctx) {
           taskEvents.emitEvent({
             taskId: ctx.taskId,
@@ -305,6 +351,8 @@ export class ToolCallingFixerAgent {
           break;
         }
       }
+
+      if (pathologyBail) break;
 
       // Prune conversation history before the next Ollama round-trip. Without
       // this, long Fixer sessions on real projects crash the llama runner —

@@ -40,6 +40,24 @@ import type { LocateResult } from './structural-edits.js';
 const MAX_TOOL_CALLS = 50;
 
 /**
+ * v1.32-a.5 pathology guard: how many consecutive errors on the same
+ * (tool_name + path) fingerprint trigger a strategy-change nudge. Tuned
+ * against the L4.1 v1.32-a.1 / v1.32-a.4 long-tail (Coder spinning 30+
+ * near-identical replace_in_file retries on the same file when each is
+ * rolled back by brace-balance). 5 gives the model real room to iterate
+ * before we step in; threshold any lower would interrupt healthy retries.
+ */
+export const PATHOLOGY_THRESHOLD = 5;
+
+/**
+ * Maximum nudge cycles before the loop hard-bails. After 2 strikes (10
+ * same-fingerprint errors with one nudge between them), the model has
+ * had a clean chance to switch strategy and didn't take it; we exit and
+ * surface the failure to the caller cleanly.
+ */
+export const MAX_PATHOLOGY_STRIKES = 2;
+
+/**
  * Files that are off-limits even when the task description mentions them only
  * vaguely. The model must explicitly name the path in the task to be allowed
  * to touch any of these — they're configuration files where a wrong edit
@@ -328,7 +346,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
  * and similar nested URL/module-path arguments. The dispatcher and the per-
  * file event emitter both consult this map to extract the path consistently.
  */
-const FILE_ARG_KEY: Record<string, string> = {
+export const FILE_ARG_KEY: Record<string, string> = {
   read_file: 'path',
   replace_in_file: 'path',
   create_file: 'path',
@@ -831,6 +849,17 @@ export class ToolCallingCoderAgent {
     let doneCalled = false;
     // v1.32-a.3 — track consecutive text-only responses for retry-with-nudge.
     let consecutiveNoToolCalls = 0;
+    // v1.32-a.5 — pathology guard. Detects model spinning on the same
+    // (tool_name + path) tuple with repeated errors. The L4.1 v1.32-a.4
+    // robustness bench showed run #1 took 58 min because Coder retried
+    // near-identical replace_in_file 30+ times, all rolled back by brace-
+    // balance. After PATHOLOGY_THRESHOLD same-fingerprint errors the
+    // dispatcher injects a strategy-change nudge; after MAX_PATHOLOGY_STRIKES
+    // such cycles, the loop bails to surface the failure cleanly.
+    let consecutiveSameToolErrors = 0;
+    let lastErrorFingerprint = '';
+    let pathologyStrikes = 0;
+    let pathologyBail = false;
     const emittedFilesByPath = new Set<string>();
 
     for (let round = 0; round < MAX_TOOL_CALLS && !doneCalled; round++) {
@@ -865,6 +894,45 @@ export class ToolCallingCoderAgent {
         const result = dispatchToolCall(call, ws, policy);
         toolCallsExecuted++;
         messages.push({ role: 'tool', content: result.text, tool_name: call.function.name });
+
+        // v1.32-a.5 — pathology guard. Same-fingerprint error streak detection.
+        // Fingerprint is tool_name + the path-bearing arg (loose enough to
+        // catch "stuck on same file" even when the model varies start_line /
+        // end_line / new_text between retries — which is exactly the L4.1
+        // brace-balance retry pattern).
+        const isError = result.text.startsWith('error:');
+        if (isError) {
+          const argKey = FILE_ARG_KEY[call.function.name] ?? 'path';
+          const fpPath = String(call.function.arguments[argKey] ?? '');
+          const fp = `${call.function.name}:${fpPath}`;
+          if (fp === lastErrorFingerprint) {
+            consecutiveSameToolErrors++;
+          } else {
+            consecutiveSameToolErrors = 1;
+            lastErrorFingerprint = fp;
+          }
+          if (consecutiveSameToolErrors >= PATHOLOGY_THRESHOLD) {
+            pathologyStrikes++;
+            consecutiveSameToolErrors = 0;
+            lastErrorFingerprint = '';
+            if (pathologyStrikes >= MAX_PATHOLOGY_STRIKES) {
+              logger.warn(
+                { agent: this.name, fingerprint: fp, totalCalls: toolCallsExecuted },
+                'Coder pathology guard: max strikes reached — bailing',
+              );
+              pathologyBail = true;
+              break;
+            }
+            messages.push({
+              role: 'user',
+              content:
+                `You have called ${call.function.name} on "${fpPath}" ${PATHOLOGY_THRESHOLD} times and gotten the same kind of error each time. The current approach is not working — change strategy. Try one of: (a) different start_line/end_line on a re-read of the file (line numbers shift after every edit); (b) a different tool — structural ones (add_route / add_method / add_import) often handle cases where replace_in_file struggles; (c) read_file the path to verify the current state; (d) call done() if you cannot make further progress. Do not retry the same call shape again.`,
+            });
+          }
+        } else {
+          consecutiveSameToolErrors = 0;
+          lastErrorFingerprint = '';
+        }
 
         if (ctx) {
           taskEvents.emitEvent({
@@ -922,6 +990,8 @@ export class ToolCallingCoderAgent {
           break;
         }
       }
+
+      if (pathologyBail) break;
     }
 
     if (toolCallsExecuted >= MAX_TOOL_CALLS && !doneCalled) {
