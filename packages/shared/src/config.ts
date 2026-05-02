@@ -16,9 +16,10 @@ function envBool(key: string, fallback: boolean): boolean {
 export const config = {
   // v1.32-d — backend selector. 'ollama' keeps the legacy /api/chat path;
   // 'llamacpp' routes through llama-swap (OpenAI-compatible /v1/chat/completions).
-  // Default stays 'ollama' until v1.32-d bench validates llamacpp end-to-end;
-  // flipped to 'llamacpp' in Phase F.
-  llmBackend: env('LLM_BACKEND', 'ollama') as 'ollama' | 'llamacpp',
+  // Default flipped to 'llamacpp' in Phase F (2026-05-02) after L1.1 ×4 (3/3
+  // commits) + L4.1 ×3 (1/3 clean fix, 0 destructive) on operator's llama-swap.
+  // Ollama path remains opt-in via LLM_BACKEND=ollama for legacy users.
+  llmBackend: env('LLM_BACKEND', 'llamacpp') as 'ollama' | 'llamacpp',
   // Optional override: if unset, embed uses the same backend as llmBackend.
   // Set to 'ollama' for hybrid mode (chat→llamacpp, embed→ollama).
   embedBackend: env('EMBED_BACKEND', '') as '' | 'ollama' | 'llamacpp',
@@ -32,7 +33,9 @@ export const config = {
     // Single llama-swap endpoint; per-role models routed via the `model` field
     // of /v1/chat/completions (llama-swap auto-loads/unloads models in VRAM).
     url: env('LLM_URL', 'http://localhost:8080'),
-    modelLarge: env('LLM_LARGE_MODEL', 'coder'),
+    // v1.32-d Phase E found that 'coder' (8K ctx) overflows on tool-calling
+    // loops with structural anchors. Default to 'qwen-coder-long' (16K).
+    modelLarge: env('LLM_LARGE_MODEL', 'qwen-coder-long'),
     modelLargeLong: env('LLM_LARGE_LONG_MODEL', 'qwen-coder-long'),
     modelSmall: env('LLM_SMALL_MODEL', 'qwen3'),
     modelEmbed: env('LLM_EMBED_MODEL', 'embed'),
@@ -78,9 +81,13 @@ export const config = {
     plannerMaxSteps: Math.max(1, envInt('PLANNER_MAX_STEPS', 50)),
     // v1.30 — when true, the Orchestrator uses the tool-calling Coder
     // (read_file/replace_in_file/create_file/delete_file/done) instead of
-    // the patch-based Coder (search/replace JSON). Off by default to keep
-    // existing behavior; flip on per-task or per-deployment to validate.
-    toolCallingCoder: envBool('TOOL_CALLING_CODER', false),
+    // the patch-based Coder (search/replace JSON). Default flipped to true
+    // in v1.32-d Phase F: tool-calling is the validated structural-anchors
+    // path (v1.31+) and required for non-trivial tasks (Phase E L4.1
+    // showed patch-based fails on edit-apply when parent commit differs
+    // from Coder's read snapshot). Patch-based remains opt-in via
+    // TOOL_CALLING_CODER=false for regression-debug only.
+    toolCallingCoder: envBool('TOOL_CALLING_CODER', true),
   },
   safeExec: {
     dryRun: envBool('SAFE_EXEC_DRY_RUN', false),

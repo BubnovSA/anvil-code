@@ -10,6 +10,10 @@ vi.mock('@rag-system/shared', async () => {
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
     config: {
       ...actual.config,
+      // Pin embed transport to OllamaClient so the spy fires; prefix wiring
+      // is at the rag/ layer (backend-agnostic), so this doesn't affect what
+      // we're testing.
+      llmBackend: 'ollama',
       rag: { ...actual.config.rag, embedConcurrency: 4, maxContextTokens: 8000 },
     },
   };

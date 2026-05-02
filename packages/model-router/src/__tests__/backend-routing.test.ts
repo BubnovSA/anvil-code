@@ -33,10 +33,10 @@ describe('createChatBackend — backend selector', () => {
     expect(createChatBackend()).toBeInstanceOf(LlamaSwapClient);
   });
 
-  it('default (no env) returns OllamaClient (backwards-compat until v1.32-d Phase F)', async () => {
+  it('default (no env) returns LlamaSwapClient (v1.32-d Phase F default)', async () => {
     const { createChatBackend } = await import('../backend.js');
-    const { OllamaClient } = await import('../ollama-client.js');
-    expect(createChatBackend()).toBeInstanceOf(OllamaClient);
+    const { LlamaSwapClient } = await import('../llamaswap-client.js');
+    expect(createChatBackend()).toBeInstanceOf(LlamaSwapClient);
   });
 
   it('uses the explicit override if passed', async () => {

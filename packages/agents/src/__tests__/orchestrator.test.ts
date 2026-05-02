@@ -438,3 +438,59 @@ describe('Orchestrator per-step recovery', () => {
     expect(stagedFiles).toEqual(['src/foo.ts']);
   });
 });
+
+// v1.32-d.1 — Fixer's output is merged into Coder's prior changes by path.
+// L1.1 first run on llama-swap surfaced the prior bug: Coder produced server.ts,
+// Reviewer rejected, Fixer produced ONLY a test-file edit, the wholesale
+// `currentChanges = fixerResult.files` dropped Coder's correct route addition.
+// The merge keeps Coder's edits for paths Fixer didn't touch.
+const { mergeFixerChanges } = await import('../orchestrator.js');
+
+describe('mergeFixerChanges — Fixer output merge semantics', () => {
+  it('preserves Coder paths Fixer did not touch', () => {
+    const coder = [
+      { action: 'modify' as const, path: 'src/server.ts', edits: [{ search: 'a', replace: 'b' }] },
+      { action: 'create' as const, path: 'src/util.ts', content: 'export {}' },
+    ];
+    const fixer = [
+      { action: 'modify' as const, path: 'src/__tests__/x.test.ts', edits: [{ search: 'c', replace: 'd' }] },
+    ];
+    const merged = mergeFixerChanges(coder, fixer);
+    expect(merged.map(c => c.path).sort()).toEqual(
+      ['src/__tests__/x.test.ts', 'src/server.ts', 'src/util.ts'].sort(),
+    );
+    // Coder's server.ts edit MUST survive — that's the L1.1 regression class.
+    const server = merged.find(c => c.path === 'src/server.ts')!;
+    expect(server.action).toBe('modify');
+  });
+
+  it('Fixer wins on shared paths (Fixer fixes Coder there)', () => {
+    const coder = [
+      { action: 'modify' as const, path: 'src/server.ts', edits: [{ search: 'old-a', replace: 'old-b' }] },
+    ];
+    const fixer = [
+      { action: 'modify' as const, path: 'src/server.ts', edits: [{ search: 'new-a', replace: 'new-b' }] },
+    ];
+    const merged = mergeFixerChanges(coder, fixer);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].path).toBe('src/server.ts');
+    expect(merged[0].action).toBe('modify');
+    // Fixer's edits are the ones in the merged entry — not concatenated.
+    const edits = (merged[0] as { edits: Array<{ search: string }> }).edits;
+    expect(edits[0].search).toBe('new-a');
+  });
+
+  it('empty fixer output keeps Coder unchanged', () => {
+    const coder = [{ action: 'create' as const, path: 'src/a.ts', content: 'x' }];
+    const merged = mergeFixerChanges(coder, []);
+    expect(merged).toEqual(coder);
+    // Should not be the same reference (returns fresh array).
+    expect(merged).not.toBe(coder);
+  });
+
+  it('empty Coder output passes Fixer through unchanged', () => {
+    const fixer = [{ action: 'create' as const, path: 'src/b.ts', content: 'y' }];
+    const merged = mergeFixerChanges([], fixer);
+    expect(merged).toEqual(fixer);
+  });
+});

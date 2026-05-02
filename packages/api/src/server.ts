@@ -3,12 +3,12 @@ import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
 import path from 'path';
-import { logger, taskEvents } from '@rag-system/shared';
+import { config, logger, taskEvents } from '@rag-system/shared';
 import type { TaskEvent } from '@rag-system/shared';
 import type { MemoryQueue } from '@rag-system/job-system';
 import type { ProjectRegistry } from '@rag-system/memory';
 import type { ProjectManager } from '@rag-system/agents';
-import { OllamaClient } from '@rag-system/model-router';
+import { createChatBackend } from '@rag-system/model-router';
 
 const CreateTaskSchema = z.object({
   task: z.string().min(1).max(2000),
@@ -42,9 +42,14 @@ export function buildServer(deps: BuildServerDeps) {
   });
 
   app.get('/health', async () => {
-    const client = new OllamaClient();
-    const ollamaOk = await client.healthCheck();
-    return { status: 'ok', ollama: ollamaOk, uptime: Math.round(process.uptime()) };
+    const backend = createChatBackend();
+    const backendOk = await backend.healthCheck();
+    return {
+      status: 'ok',
+      backend: config.llmBackend,
+      backendUp: backendOk,
+      uptime: Math.round(process.uptime()),
+    };
   });
 
   app.post('/task', async (request, reply) => {

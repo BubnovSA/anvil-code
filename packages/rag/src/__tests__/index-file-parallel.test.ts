@@ -10,6 +10,11 @@ vi.mock('@rag-system/shared', async () => {
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
     config: {
       ...actual.config,
+      // Tests spy on OllamaClient.prototype.embed; pin backend to ollama so
+      // the factory selects OllamaClient for the embed path. v1.32-d Phase F
+      // flipped the live default to llamacpp, but these tests are about
+      // concurrency primitives and don't depend on transport.
+      llmBackend: 'ollama',
       rag: { ...actual.config.rag, embedConcurrency: 4 },
     },
   };

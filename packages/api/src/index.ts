@@ -1,5 +1,5 @@
 import { config, logger, validateConfig } from '@rag-system/shared';
-import { OllamaClient, ModelRouter } from '@rag-system/model-router';
+import { ModelRouter, createChatBackend } from '@rag-system/model-router';
 import { ProjectRegistry } from '@rag-system/memory';
 import { FileWatcher } from '@rag-system/rag';
 import { ProjectManager } from '@rag-system/agents';
@@ -9,19 +9,22 @@ import { buildServer } from './server.js';
 async function main() {
   validateConfig();
 
-  const ollamaClient = new OllamaClient();
-  const isOllamaUp = await ollamaClient.healthCheck();
-
-  if (!isOllamaUp) {
+  // v1.32-d — backend factory selects between OllamaClient and LlamaSwapClient
+  // based on LLM_BACKEND env. Health check the active backend on startup so a
+  // misconfigured URL surfaces in the log instead of failing the first task.
+  const backend = createChatBackend();
+  const isUp = await backend.healthCheck();
+  const backendUrl = config.llmBackend === 'llamacpp' ? config.llamacpp.url : config.ollama.baseUrl;
+  if (!isUp) {
     logger.warn(
-      { url: config.ollama.baseUrl },
-      'Ollama not available — tasks will fail until Ollama is running'
+      { backend: config.llmBackend, url: backendUrl },
+      'LLM backend not available — tasks will fail until it is running',
     );
   } else {
-    logger.info({ url: config.ollama.baseUrl }, 'Ollama connected');
+    logger.info({ backend: config.llmBackend, url: backendUrl }, 'LLM backend connected');
   }
 
-  const router = new ModelRouter(ollamaClient);
+  const router = new ModelRouter(backend);
   const registry = new ProjectRegistry();
   const projects = new ProjectManager(registry, router);
 

@@ -591,7 +591,15 @@ export class Orchestrator {
             },
           }),
         );
-        currentChanges = fixerResult.files;
+        // v1.32-d.1 — Merge instead of replace. Wholesale `currentChanges =
+        // fixerResult.files` was losing Coder's correct edits any time Fixer
+        // touched only a subset (e.g. only the test file Reviewer flagged).
+        // L1.1 first run on llama-swap surfaced this: Coder produced server.ts
+        // /health route, Fixer produced a single test-file edit, replace
+        // dropped server.ts → commit_partial with the substantive change lost.
+        // Semantics: Fixer's output wins for paths it touched (it fixes Coder's
+        // mistakes); paths Fixer didn't touch keep Coder's prior edit.
+        currentChanges = mergeFixerChanges(currentChanges, fixerResult.files);
       }
     }
 
@@ -863,6 +871,30 @@ function resolveVirtualSources(
   }
 
   return Array.from(virtual, ([path, content]) => ({ path, content }));
+}
+
+/**
+ * v1.32-d.1 — Merge a Fixer's FileChange[] over the prior Coder/Tester output.
+ * Fixer's output wins for paths Fixer touched (semantically: Fixer just fixed
+ * an issue Reviewer flagged on that path). Paths Fixer didn't touch keep the
+ * prior edit (Coder's work was fine for those).
+ *
+ * Why this exists: previous code did `currentChanges = fixerResult.files` —
+ * wholesale replace. When Fixer only addressed a subset (e.g. fix the failing
+ * test, leave the route alone), Coder's correct route edit was dropped, and
+ * the commit step saw nothing substantive to land. L1.1 ×1 on llama-swap +
+ * qwen-coder reproduced this consistently because the model's Reviewer
+ * rejection rate is higher than on the prior Ollama setup.
+ *
+ * Returns a fresh array; inputs are not mutated.
+ */
+export function mergeFixerChanges(
+  prior: FileChange[],
+  fixer: FileChange[],
+): FileChange[] {
+  const fixerPaths = new Set(fixer.map(f => f.path));
+  const preservedPrior = prior.filter(c => !fixerPaths.has(c.path));
+  return [...preservedPrior, ...fixer];
 }
 
 /**

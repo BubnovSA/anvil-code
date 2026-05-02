@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟡 v1.32-d Phase B+D + v1.32-a.6 landed. **v1.32-d** (llama-swap backend swap): `LlamaSwapClient` (OpenAI-compat) живёт рядом с `OllamaClient` под `LLM_BACKEND` switch. Per-role aliases: `coder`/`qwen3`/`embed`. Nomic-v1.5 task prefixes wired в `packages/rag/`. **v1.32-a.6** (prettier post-step): `PrettierRunner` запускается между validation pass и git commit на `writtenFiles`; идемпотентный, никогда не блокирует commit (cosmetics-only); skip когда prettier не настроен в target project. 441/441 unit-tests (+49 vs v1.32-a.5: 31 backend + 3 prefix + 15 prettier). **Pending:** Phase E (bench L1.1+L4.1+scale на llama-swap baseline), Phase F (flip default).  
+**Статус проекта**: 🟢 v1.32-d closed (Phase B+D+E+F + v1.32-d.1 + v1.32-a.6). **Default backend = llamacpp** (operator's llama-swap on `172.20.10.4:8080`). Phase E bench: L1.1 ×4 (3/3 commits, mean 101s, ~50% faster than Ollama baseline) + L4.1 ×3 (1/3 clean fix, 0 destructive — parity с Ollama). v1.32-d.1 mergeFixerChanges fix (Coder edits preserved when Fixer touches subset). Phase F flipped: `LLM_BACKEND=llamacpp`, `LLM_LARGE_MODEL=qwen-coder-long` (16K), `TOOL_CALLING_CODER=true` defaults. **Pending v1.32-d.2 candidates** (опционально): modify-non-existent → create fallback; Fixer prompt nudge на navigation от тестов к production. **Next:** v1.32-c sub-agents (Phase 3 architectural closure) на стабильном llama-swap baseline. 445/445 unit-tests.  
 **Последнее обновление**: 2026-05-02  
 **Цель v1.0**: Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок
 
