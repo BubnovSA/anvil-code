@@ -69,6 +69,8 @@ export const config = {
     fileConcurrency: Math.max(1, envInt('FILE_CONCURRENCY', 4)),
     rerankerEnabled: envBool('RAG_RERANKER_ENABLED', false),
     rerankerCandidates: Math.max(1, envInt('RAG_RERANKER_CANDIDATES', 30)),
+    bm25Enabled: envBool('RAG_BM25_ENABLED', true),
+    bm25Candidates: Math.max(1, envInt('RAG_BM25_CANDIDATES', 30)),
   },
   watcher: {
     enabled: envBool('WATCH_ENABLED', false),

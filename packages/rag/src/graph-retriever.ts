@@ -7,6 +7,7 @@ import { createEmbedBackend, effectiveEmbedModel } from '@rag-system/model-route
 import type { ModelBackend } from '@rag-system/model-router';
 import { ASTParser, CodeGraph } from '@rag-system/code-graph';
 import { VectorStore } from './vector-store.js';
+import { BM25Index } from './bm25.js';
 
 /**
  * v1.32-d — nomic-embed-text-v1.5 was trained with task-specific prefixes.
@@ -46,6 +47,7 @@ interface RetrieverStore {
 export class GraphRetriever {
   private vectorStore: VectorStore;
   private codeGraph: CodeGraph;
+  private bm25Index: BM25Index;
   private embedClient: ModelBackend;
   private embedModelLabel: string;
   private parser: ASTParser;
@@ -58,6 +60,7 @@ export class GraphRetriever {
   constructor(store?: RetrieverStore, paths?: { vectorsDir?: string; graphsDir?: string }) {
     this.vectorStore = new VectorStore(paths?.vectorsDir);
     this.codeGraph = new CodeGraph(paths?.graphsDir);
+    this.bm25Index = new BM25Index();
     this.embedClient = createEmbedBackend();
     this.embedModelLabel = effectiveEmbedModel();
     this.parser = new ASTParser();
@@ -111,10 +114,25 @@ export class GraphRetriever {
     }
 
     const useReranker = config.rag.rerankerEnabled && typeof this.embedClient.rerank === 'function';
+    const useBM25 = config.rag.bm25Enabled && this.bm25Index.size > 0;
     const candidateCount = useReranker ? config.rag.rerankerCandidates : k;
 
-    const candidates = await this.vectorStore.search(queryVector, candidateCount);
+    let candidates = await this.vectorStore.search(queryVector, candidateCount);
     if (candidates.length === 0) return [];
+
+    if (useBM25) {
+      const bm25Results = this.bm25Index.search(query, config.rag.bm25Candidates);
+      const mergedIds = BM25Index.rrf(
+        candidates.map(c => c.id),
+        bm25Results.map(r => r.id),
+      );
+      const denseById = new Map(candidates.map(c => [c.id, c]));
+      candidates = mergedIds.map(id => denseById.get(id) ?? { id, distance: 0 });
+      logger.debug(
+        { dense: candidates.length, bm25: bm25Results.length, merged: mergedIds.length },
+        'RAG BM25 hybrid merge applied',
+      );
+    }
 
     let results = candidates;
     if (useReranker) {
@@ -171,10 +189,11 @@ export class GraphRetriever {
   }
 
   async indexFile(filePath: string): Promise<void> {
-    // Drop stale vectors for any symbols this file used to define
+    // Drop stale vectors and BM25 entries for any symbols this file used to define
     const previous = this.codeGraph.getByFile(filePath);
     for (const old of previous) {
       await this.vectorStore.removeById(old.name);
+      this.bm25Index.remove(old.name);
     }
 
     const symbols = this.parser.parseFile(filePath);
@@ -185,13 +204,21 @@ export class GraphRetriever {
 
     this.codeGraph.addFile(filePath, symbols);
 
-    // Embed all symbols in parallel — the global embedSemaphore inside embedWithCache
-    // throttles real Ollama traffic, and VectorStore.add() is mutex-protected so
-    // concurrent inserts serialize inside the index.
     await Promise.all(symbols.map(async (symbol) => {
-      const text = `${symbol.kind} ${symbol.name}: ${symbol.text}`;
+      // BM25 corpus: path components + symbol name ×3 (boost exact-name matches)
+      // + kind + body text. Tokenizer lowercases and splits on non-word chars.
+      const pathTokens = filePath.split('/').flatMap(p => p.split('.'));
+      const bm25Corpus = [
+        ...pathTokens,
+        symbol.name, symbol.name, symbol.name,
+        symbol.kind,
+        symbol.text,
+      ].join(' ');
+      this.bm25Index.add(symbol.name, bm25Corpus);
+
+      const embedText = `${symbol.kind} ${symbol.name}: ${symbol.text}`;
       try {
-        const vector = await this.embedWithCache(text, 'document');
+        const vector = await this.embedWithCache(embedText, 'document');
         await this.vectorStore.add(symbol.name, vector, { filePath, kind: symbol.kind });
       } catch {
         // Embed backend unavailable — skip vector, code graph still populated
@@ -203,6 +230,7 @@ export class GraphRetriever {
     const symbols = this.codeGraph.getByFile(filePath);
     for (const sym of symbols) {
       await this.vectorStore.removeById(sym.name);
+      this.bm25Index.remove(sym.name);
     }
     this.codeGraph.removeFile(filePath);
     if (this.store) this.store.deleteFileHash(filePath);
@@ -217,7 +245,14 @@ export class GraphRetriever {
   async indexCodebase(rootDir: string, opts: { indexId?: string } = {}): Promise<string> {
     const indexId = opts.indexId ?? `idx-${Date.now()}`;
     const absRoot = path.resolve(rootDir);
-    const ignore = config.codeGraph.exclude.map(e => `**/${e}/**`);
+    // Exclude standard dirs + the backups dir (relative path from project root).
+    // Backup files are TypeScript but are noise in retrieval — they match every
+    // query because they contain fragments of every file ever edited.
+    const backupsRel = path.relative(absRoot, path.resolve(rootDir, config.safeExec.backupsPath));
+    const ignore = [
+      ...config.codeGraph.exclude.map(e => `**/${e}/**`),
+      `${backupsRel}/**`,
+    ];
 
     const files: string[] = [];
     for (const pattern of config.codeGraph.include) {
@@ -338,6 +373,22 @@ export class GraphRetriever {
       if (r.status === 'rejected') {
         logger.warn({ error: r.reason }, 'RAG component load failed, starting fresh');
       }
+    }
+    // Rebuild BM25 index from the in-memory CodeGraph (no separate persistence).
+    // CodeGraph is the source of truth for symbol bodies; BM25 is derived.
+    this.bm25Index = new BM25Index();
+    for (const symbol of this.codeGraph.getAll()) {
+      const pathTokens = symbol.filePath.split('/').flatMap(p => p.split('.'));
+      const corpus = [
+        ...pathTokens,
+        symbol.name, symbol.name, symbol.name,
+        symbol.kind,
+        symbol.text,
+      ].join(' ');
+      this.bm25Index.add(symbol.name, corpus);
+    }
+    if (this.bm25Index.size > 0) {
+      logger.debug({ symbols: this.bm25Index.size }, 'BM25 index rebuilt from CodeGraph');
     }
   }
 }

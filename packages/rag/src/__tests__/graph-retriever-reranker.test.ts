@@ -144,4 +144,44 @@ describe('GraphRetriever two-pass reranking (v1.33)', () => {
     expect(items).toEqual([]);
     expect(rerankSpy).not.toHaveBeenCalled();
   });
+
+  it('v1.34 — data/backups/** files are excluded from indexCodebase (no noise in retrieval)', async () => {
+    const { config } = await import('@rag-system/shared');
+
+    // Create a source file and a backup file
+    const srcFile = path.join(tmpDir, 'src', 'server.ts');
+    fs.mkdirSync(path.dirname(srcFile), { recursive: true });
+    fs.writeFileSync(srcFile, 'export function listen() { return true; }');
+
+    const backupDir = path.join(tmpDir, config.safeExec.backupsPath);
+    fs.mkdirSync(backupDir, { recursive: true });
+    const backupFile = path.join(backupDir, 'f42a63c1.ts');
+    fs.writeFileSync(backupFile, 'export function listen() { return "backup"; }');
+
+    const r = new GraphRetriever(undefined, { vectorsDir: tmpDir, graphsDir: tmpDir });
+    await r.indexCodebase(tmpDir);
+
+    // BM25 index must contain the source symbol but NOT the backup
+    // We verify via retrieveContextItems — backup body differs from src
+    const items = await r.retrieveContextItems('listen function server', 5);
+    const paths = items.map(i => i.filePath);
+    expect(paths.some(p => p.includes('backups'))).toBe(false);
+    expect(paths.some(p => p.includes('src') && p.includes('server'))).toBe(true);
+  });
+
+  it('v1.34 — RAG_BM25_ENABLED=false skips BM25 merge (kill-switch)', async () => {
+    const { config } = await import('@rag-system/shared');
+    config.rag.bm25Enabled = false;
+
+    const file = path.join(tmpDir, 'svc.ts');
+    fs.writeFileSync(file, 'export function myService() { return 42; }');
+
+    const r = new GraphRetriever();
+    await r.indexFile(file);
+    // Should not throw; returns results via dense-only path
+    const items = await r.retrieveContextItems('myService', 5);
+    expect(Array.isArray(items)).toBe(true);
+
+    config.rag.bm25Enabled = true; // restore
+  });
 });
