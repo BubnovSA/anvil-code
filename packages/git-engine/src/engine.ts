@@ -1,5 +1,5 @@
 import { simpleGit, SimpleGit } from 'simple-git';
-import { logger } from '@rag-system/shared';
+import { logger, config } from '@rag-system/shared';
 import path from 'path';
 
 export class GitEngine {
@@ -19,15 +19,14 @@ export class GitEngine {
     const branchName = `auto/task-${taskId}-${Date.now()}`;
     logger.info({ branchName }, 'Creating git branch');
     
-    // Make sure we are on main/master first, or whichever default
-    // We assume 'main' for now.
+    const defaultBranch = config.git.defaultBranch;
     try {
-      await this.git.checkout('main');
+      await this.git.checkout(defaultBranch);
     } catch {
-       // fallback to master if main doesn't exist
-       try { await this.git.checkout('master'); } catch (e) {
-           logger.warn('Neither main nor master found. Staying on current branch.');
-       }
+      const fallback = defaultBranch === 'main' ? 'master' : 'main';
+      try { await this.git.checkout(fallback); } catch {
+        logger.warn({ defaultBranch }, 'Default branch not found. Staying on current branch.');
+      }
     }
 
     try {
