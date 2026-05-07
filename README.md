@@ -1,509 +1,131 @@
-# 🧠 RAG System — Autonomous Software Engineering Platform
+# RAG System
 
-> Полностью локальная автономная система программной инженерии.  
-> Принимает задачу → планирует архитектуру → пишет код → тестирует → коммитит в git.
+**Local autonomous coding agent.** Give it a task in plain English; it plans, writes code, runs tests, fixes failures, and commits — entirely on your machine.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        HTTP API (Fastify)                       │
-│                   POST /task  ·  GET /task/:id                  │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────────┐
-│                     Job System (Queue + Worker)                 │
-│              In-memory queue · Retry · Status tracking          │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────────┐
-│                     Orchestrator Agent                          │
-│               Управляет полным жизненным циклом задачи          │
-│                                                                 │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
-│  │ Planner  │→ │ Architect│→ │  Coder   │→ │  Tester  │       │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘       │
-│                                    ↓ (fail)                     │
-│                              ┌──────────┐                       │
-│                              │  Fixer   │→ retry (max 3x)      │
-│                              └──────────┘                       │
-└──────┬──────────┬──────────┬──────────────┬─────────────────────┘
-       │          │          │              │
-  ┌────▼───┐ ┌───▼────┐ ┌───▼───┐   ┌─────▼─────┐
-  │  RAG   │ │ Code   │ │ Safe  │   │    Git    │
-  │ Engine │ │ Graph  │ │ Exec  │   │  Engine   │
-  └────┬───┘ └───┬────┘ └───┬───┘   └─────┬─────┘
-       │         │          │              │
-  ┌────▼───┐ ┌───▼────┐ ┌───▼───┐   ┌─────▼─────┐
-  │Vectors │ │  AST   │ │Backup │   │ Branches  │
-  │(HNSW)  │ │ Parse  │ │ Diff  │   │  Commits  │
-  └────────┘ └────────┘ └───────┘   └───────────┘
-                 │
-           ┌─────▼──────┐
-           │   Memory   │
-           │  (SQLite)  │
-           └────────────┘
+POST /task  →  Planner  →  Coder  →  Reviewer  →  Fixer (retry ×3)  →  git commit
 ```
+
+No cloud. No subscriptions. Any OpenAI-compatible LLM backend.
 
 ---
 
-## 📋 Оглавление
+## What it does
 
-- [Архитектура](#архитектура)
-- [Структура проекта](#структура-проекта)
-- [Описание пакетов](#описание-пакетов)
-- [Требования](#требования)
-- [Установка и запуск](#установка-и-запуск)
-- [Конфигурация](#конфигурация)
-- [API Reference](#api-reference)
-- [Интеграция с VSCode](#интеграция-с-vscode)
-- [Документирование итераций](#документирование-итераций)
-- [Известные ограничения и план доработок](#известные-ограничения-и-план-доработок)
+- Decomposes a natural-language task into a DAG of steps (Planner)
+- Writes TypeScript/JavaScript files using structural AST tools (`add_method`, `replace_function`, …) with line-level fallback (Coder)
+- Runs the project's test suite and iterates through a validation loop until tests pass (Fixer)
+- Commits the result to an isolated branch with a structured message (Git Engine)
+- Indexes your codebase with hybrid BM25 + dense vector search (RRF) for context retrieval
 
----
+## Architecture
 
-## Архитектура
-
-Система построена как **Turborepo-монорепозиторий** из 10 независимых пакетов.  
-Каждый пакет — отдельный npm workspace с собственным `package.json` и `tsconfig.json`.
-
-### Принцип работы
-
-1. Пользователь отправляет `POST /task` с описанием задачи
-2. **Job System** ставит задачу в очередь, присваивает ID
-3. **Worker** забирает задачу и передаёт в **Orchestrator**
-4. Orchestrator последовательно запускает агентов:
-   - **Planner** → декомпозиция задачи в DAG шагов
-   - **Coder** → генерация кода для каждого шага
-   - Все файловые операции проходят через **Safe Exec** (backup + diff + validation)
-5. Результат коммитится через **Git Engine** в отдельную ветку
-6. Статус и история сохраняются в **Memory** (SQLite)
-
-### Модель маршрутизации LLM
-
-```
-Agent Role    → Model Size → Default Model
-─────────────────────────────────────────────
-planner       → small      → qwen2.5-coder:7b
-reviewer      → small      → qwen2.5-coder:7b
-tester        → small      → qwen2.5-coder:7b
-architect     → large      → deepseek-coder-v2:16b
-coder         → large      → deepseek-coder-v2:16b
-fixer         → large      → deepseek-coder-v2:16b
-```
-
-Режим задачи (`fast`/`balanced`/`deep`) может форсировать все агенты на одну модель.
+The system is a **Turborepo monorepo** of 12 TypeScript packages. An HTTP API (Fastify) accepts tasks and queues them for an async Worker. The Worker hands each task to an Orchestrator that runs agents in sequence: Planner decomposes the task, Coder produces file changes via tool-calling, Reviewer checks the result, and a validation loop invokes Fixer (up to 3 attempts) if tests fail. All file writes go through Safe Exec (backup → diff → write) and are committed via Git Engine to a `auto/task-*` branch. Context is supplied by a RAG Engine that combines an HNSW vector index with a BM25 keyword index and a graph traversal step over an AST-derived code graph.
 
 ---
 
-## Структура проекта
+## Requirements
 
-```
-rag-system/
-├── package.json              # Root workspace config
-├── tsconfig.base.json        # Общая конфигурация TypeScript
-├── turbo.json                # Turborepo pipeline
-├── .env.example              # Шаблон переменных окружения
-├── .gitignore
-│
-├── packages/
-│   ├── shared/               # Общие типы, логгер, утилиты
-│   ├── model-router/         # Маршрутизация LLM-запросов через Ollama
-│   ├── memory/               # Персистентное хранилище (SQLite)
-│   ├── safe-exec/            # Безопасные файловые операции
-│   ├── git-engine/           # Git-операции (ветки, коммиты)
-│   ├── code-graph/           # AST-парсинг и граф зависимостей
-│   ├── rag/                  # Векторный поиск + графовый retrieval
-│   ├── agents/               # Агенты (Planner, Coder, Orchestrator)
-│   ├── job-system/           # Очередь задач + Worker
-│   └── api/                  # HTTP API (Fastify)
-│
-└── data/                     # Runtime данные (gitignored)
-    ├── memory.db             # SQLite база
-    ├── vectors/              # HNSW индексы
-    ├── backups/              # Бэкапы файлов перед перезаписью
-    └── graphs/               # Сериализованные графы кода
-```
+| | Minimum |
+|---|---|
+| Node.js | 18 LTS |
+| npm | 9+ |
+| Git | 2.30+ |
+| LLM backend | llama-swap, llama-server, or any OpenAI-compatible `/v1/chat/completions` endpoint |
+
+Tested with **llama-swap** fronting:
+- `qwen-coder-long` — coder/fixer/architect (16 K context required)
+- `qwen3` — planner/reviewer/tester
+- `nomic-embed-text-v1.5` (`embed` alias) — embeddings (768 dim)
+- a cross-encoder reranker (`reranker` alias)
 
 ---
 
-## Описание пакетов
+## Quickstart
 
-### `@rag-system/shared`
-Фундаментальный пакет. Содержит:
-- **Типы**: `TaskDefinition`, `AgentMessage`, `FileChange`, `DiffResult`, `JobStatus`, `ModelRole`
-- **Логгер**: обёртка над `pino` с pretty-print, уровень задаётся через `LOG_LEVEL`
+### 1. Start your LLM backend
 
-Используется всеми остальными пакетами.
+Configure [llama-swap](https://github.com/mostlygeek/llama-swap) with the model aliases above, or point any OpenAI-compatible server at port 8080.
 
-### `@rag-system/model-router`
-Абстракция над Ollama API. Компоненты:
-- **OllamaClient** — HTTP-клиент к `POST /api/generate` и `/api/embeddings`
-- **ModelRouter** — маппинг `AgentRole → Model`, кеширование, поддержка `jsonMode`
-- **RoleOptimalSize** — таблица соответствия роли агента и размера модели
-
-### `@rag-system/memory`
-SQLite-хранилище через `better-sqlite3`. Три таблицы:
-- `tasks` — история задач (id, description, status, result)
-- `adr` — Architectural Decision Records (решения, контекст, последствия)
-- `failures` — паттерны ошибок с частотой и резолюцией
-
-### `@rag-system/safe-exec`
-Пайплайн безопасной записи файлов:
-1. **BackupManager** — создаёт копию файла в `data/backups/` перед перезаписью
-2. **DiffEngine** — генерирует unified diff через библиотеку `diff`
-3. **SafeWriter** — единственная точка записи; валидирует path (no traversal), создаёт backup, генерирует diff, поддерживает dry-run
-
-### `@rag-system/git-engine`
-Обёртка над `simple-git`:
-- `createBranchForTask(taskId)` — создаёт ветку `auto/task-{id}-{timestamp}`
-- `commitChanges(taskId, message, files)` — stage + commit с префиксом `[Auto-{taskId}]`
-- `rollback(commitHash)` — `git revert`
-
-### `@rag-system/code-graph`
-AST-парсер на базе нативного TypeScript Compiler API:
-- **ASTParser** — извлекает `classes`, `functions`, `interfaces`, `types` из TS/JS файлов
-- **CodeGraph** — хранит символы в `Map`, строит граф зависимостей по именам
-- Инкрементальный: при повторном вызове `addFile()` старые символы для файла заменяются
-
-### `@rag-system/rag`
-Гибридная система retrieval:
-- **VectorStore** — HNSW индекс через `hnswlib-node` (cosine distance)
-- **GraphRetriever** — комбинирует vector search + graph traversal (1 hop по зависимостям)
-
-### `@rag-system/agents`
-Агентная система:
-- **BaseAgent** — абстрактный класс с `callLLM()` и `parseJSON()`
-- **PlannerAgent** — декомпозиция задачи в JSON DAG
-- **CoderAgent** — генерация файловых изменений в JSON
-- **Orchestrator** — управляет полным пайплайном (plan → code → write → commit)
-
-### `@rag-system/job-system`
-Асинхронная обработка задач:
-- **MemoryQueue** — in-memory очередь с приоритетами и статусами
-- **JobWorker** — polling loop, забирает задачи и запускает Orchestrator
-
-### `@rag-system/api`
-HTTP API на Fastify:
-- `POST /task` — создание задачи
-- `GET /task/:id` — получение статуса
-- Валидация через `zod`
-- Автоматический запуск Worker при старте сервера
-
----
-
-## Требования
-
-| Компонент | Минимум | Рекомендуется |
-|-----------|---------|---------------|
-| Node.js | 18 LTS | 20 LTS |
-| npm | 9+ | 10+ |
-| Git | 2.30+ | 2.39+ |
-| Ollama | 0.1.0+ | latest |
-| RAM | 16 GB | 32 GB |
-| Disk | 20 GB (модели) | 30 GB |
-
-### Модели Ollama (необходимы)
+### 2. Clone and build
 
 ```bash
-ollama pull deepseek-coder-v2:16b    # ~10 GB
-ollama pull qwen2.5-coder:7b          # ~4.5 GB
-ollama pull nomic-embed-text           # ~270 MB
-```
-
----
-
-## Установка и запуск
-
-### 1. Установка Node.js (если не установлен)
-
-```bash
-# Через nvm (рекомендуется)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-source ~/.zshrc
-nvm install 20
-nvm use 20
-```
-
-### 2. Установка Ollama
-
-```bash
-# macOS
-brew install ollama
-
-# или прямая загрузка
-curl -fsSL https://ollama.ai/install.sh | sh
-```
-
-### 3. Запуск Ollama и загрузка моделей
-
-```bash
-# В отдельном терминале — запустить сервер
-ollama serve
-
-# Скачать модели
-ollama pull deepseek-coder-v2:16b
-ollama pull qwen2.5-coder:7b
-ollama pull nomic-embed-text
-```
-
-### 4. Клонирование и установка зависимостей
-
-```bash
-cd /Users/admin/Documents/work/rag-system
-
-# Создать .env из шаблона
-cp .env.example .env
-
-# Установить все зависимости (workspace-aware)
+git clone https://github.com/bubnovsa/rag-system.git
+cd rag-system
 npm install
-
-# Собрать все пакеты
 npm run build
 ```
 
-### 5. Запуск системы
+### 3. Configure environment
 
 ```bash
-# Запуск API сервера (включает Worker автоматически)
+cp .env.example .env
+```
+
+Key variables (see `.env.example` for the full list):
+
+```env
+LLM_BACKEND=llamacpp
+LLM_URL=http://localhost:8080
+LLM_LARGE_MODEL=qwen-coder-long
+LLM_SMALL_MODEL=qwen3
+LLM_EMBED_MODEL=embed
+PROJECT_ROOT=/path/to/your/repo
+```
+
+### 4. Start the API
+
+```bash
+source .env   # or: set -a && . .env && set +a
 node packages/api/dist/index.js
 ```
 
-Сервер запускается на `http://localhost:3000`.
+Server starts on `http://localhost:3000`.
 
-### 6. Отправка задачи
+### 5. Install the VS Code extension
 
 ```bash
-# Создать задачу
+cd packages/vscode-extension
+npm run build
+npx vsce package        # produces rag-system-vscode-*.vsix
+```
+
+In VS Code: **Extensions → ⋯ → Install from VSIX…** → select the `.vsix` file.
+
+The extension adds a **RAG System** panel in the Activity Bar. Set the API URL (`RAG: Set API URL`), register your project, and submit tasks from the sidebar.
+
+### 6. Submit your first task
+
+Via curl:
+
+```bash
 curl -X POST http://localhost:3000/task \
   -H "Content-Type: application/json" \
-  -d '{"task": "Create a utility function for date formatting", "mode": "balanced"}'
+  -d '{"task": "Add input validation to the POST /users endpoint", "projectRoot": "/path/to/your/repo"}'
+```
 
-# Проверить статус
+Poll for status:
+
+```bash
 curl http://localhost:3000/task/<task_id>
 ```
 
 ---
 
-## Конфигурация
+## Known limitations
 
-Все настройки — через переменные окружения в файле `.env`.  
-Подробное описание каждой переменной — в `.env.example`.
-
-Ключевые переменные:
-
-| Переменная | Назначение | По умолчанию |
-|-----------|-----------|-------------|
-| `OLLAMA_BASE_URL` | Адрес Ollama API | `http://127.0.0.1:11434` |
-| `OLLAMA_MODEL_LARGE` | Модель для кодинга | `deepseek-coder-v2:16b` |
-| `OLLAMA_MODEL_SMALL` | Модель для планирования | `qwen2.5-coder:7b` |
-| `API_PORT` | Порт HTTP API | `3000` |
-| `LOG_LEVEL` | Уровень логирования | `info` |
-| `PROJECT_ROOT` | Путь к целевому репозиторию | `process.cwd()` |
-| `SAFE_EXEC_DRY_RUN` | Режим без записи | `false` |
-| `JOB_MAX_RETRIES` | Макс. повторов | `3` |
+- **TypeScript / JavaScript only** — the AST parser and structural edit tools are TS-native; other languages fall back to line-based edits.
+- **Context scales to ~50-file projects** — retrieval works well on small/medium codebases; repos larger than ~90 files hit the 16 K context window on complex multi-file tasks (L2+ bench level). Multi-hop closure is planned post-release.
+- **No streaming** — `GET /task/:id` returns final status only; the VS Code extension polls. SSE streaming is on the roadmap.
+- **Single machine** — no auth, no multi-user isolation. Designed for personal local use.
+- **Fixer is probabilistic** — the validation loop improves reliability but does not guarantee a passing commit on every run; `COMMIT_ONLY_IF_VALID=true` (default) skips the commit rather than landing broken code.
 
 ---
 
-## API Reference
+## Contributing
 
-### `POST /task`
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Создать новую задачу для автономного выполнения.
+## License
 
-**Request:**
-```json
-{
-  "task": "Add input validation to the user registration endpoint",
-  "mode": "balanced"
-}
-```
-
-| Поле | Тип | Описание |
-|------|-----|---------|
-| `task` | `string` | Описание задачи на естественном языке |
-| `mode` | `"fast" \| "balanced" \| "deep"` | Режим: fast — маленькая модель для всех, deep — большая для всех |
-
-**Response:**
-```json
-{
-  "task_id": "1713312000000",
-  "status": "queued"
-}
-```
-
-### `GET /task/:id`
-
-Получить статус задачи.
-
-**Response:**
-```json
-{
-  "task_id": "1713312000000",
-  "status": "completed",
-  "logs": []
-}
-```
-
-Статусы: `queued` → `running` → `completed` / `failed`
-
----
-
-## Интеграция с VSCode
-
-### Вариант 1: REST Client Extension
-
-Установите расширение **REST Client** (`humao.rest-client`) и создайте файл `requests.http`:
-
-```http
-### Create Task
-POST http://localhost:3000/task
-Content-Type: application/json
-
-{
-  "task": "Refactor the authentication module to use JWT tokens",
-  "mode": "deep"
-}
-
-### Check Task Status
-GET http://localhost:3000/task/1713312000000
-```
-
-### Вариант 2: Tasks в VSCode
-
-Создайте `.vscode/tasks.json` в корне проекта:
-
-```json
-{
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "RAG: Start Server",
-      "type": "shell",
-      "command": "node packages/api/dist/index.js",
-      "options": { "cwd": "${workspaceFolder}" },
-      "isBackground": true,
-      "problemMatcher": []
-    },
-    {
-      "label": "RAG: Build All",
-      "type": "shell",
-      "command": "npm run build",
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": { "kind": "build", "isDefault": true }
-    },
-    {
-      "label": "RAG: Send Task",
-      "type": "shell",
-      "command": "curl -s -X POST http://localhost:3000/task -H 'Content-Type: application/json' -d '{\"task\": \"${input:taskDescription}\", \"mode\": \"${input:taskMode}\"}'",
-      "problemMatcher": []
-    }
-  ],
-  "inputs": [
-    {
-      "id": "taskDescription",
-      "description": "Describe the engineering task",
-      "type": "promptString"
-    },
-    {
-      "id": "taskMode",
-      "description": "Select mode",
-      "type": "pickString",
-      "options": ["fast", "balanced", "deep"],
-      "default": "balanced"
-    }
-  ]
-}
-```
-
-### Вариант 3: Кастомный VSCode Extension (будущее)
-
-Система предоставляет HTTP API, совместимый с любым клиентом. Для full-featured интеграции можно разработать расширение, которое:
-- Подписывается на SSE-стрим задачи (`GET /task/:id/stream`)
-- Показывает прогресс в Sidebar
-- Открывает diff-preview при завершении
-
----
-
-## Документирование итераций
-
-Каждая итерация проходит через 4 артефакта:
-
-| Артефакт | Что туда | Когда |
-|---|---|---|
-| **[docs/designs/](docs/designs/)** | Pre-impl design doc (TL;DR / Goals / Architecture / Phases / AC) — шаблон [_template.md](docs/designs/_template.md) | ДО первого коммита кода — для итераций ETA > 1 день или с архитектурным сдвигом |
-| **Implementation** | Код в `packages/*` + unit-тесты | — |
-| **[docs/benchmarks/runs/](docs/benchmarks/runs/)** | Post-impl bench (configuration, scores, what worked/broke) — шаблон [_template.md](docs/benchmarks/runs/_template.md) | После каждой итерации с поведенческим изменением |
-| **[CHANGELOG.md](CHANGELOG.md)** | Append-only chronological log; 1 запись на версию (5-15 строк), ссылки на design + bench | После закрытия итерации |
-| **[ROADMAP.md](ROADMAP.md)** | Текущее состояние + next 2-3 итерации (~250 строк, не больше) | Tick checkbox + дата при каждой итерации |
-
-**Правило:** если итерация требует design-doc, то его файл создаётся **до** первого коммита кода. Дата создания в git log — это точка «начали». Бенчмарк-файл — точка «закрыли».
-
-Подробности lifecycle и triggers для design-doc — в [ROADMAP.md → Документация и workflow](ROADMAP.md#документация-и-workflow).
-
----
-
-## Известные ограничения и план доработок
-
-### 🔴 Критические (требуют реализации для production)
-
-1. **Отсутствуют 4 из 8 агентов**
-   - `ArchitectAgent` — не реализован, Orchestrator пропускает этап архитектурного дизайна
-   - `TesterAgent` — не реализован, нет генерации тестов
-   - `ReviewerAgent` — не реализован, нет code review перед коммитом
-   - `FixerAgent` — не реализован, нет self-healing loop
-
-2. **Нет цикла самоисправления (self-healing)**
-   - Orchestrator выполняет шаги линейно без retry при ошибках агентов
-   - Необходим цикл: Code → Test → Review → Fix → retry (max 3)
-
-3. **Config не подключён к ENV**
-   - `ModelRouter` хардкодит модели вместо чтения из `process.env`
-   - `OllamaClient` хардкодит `baseUrl`
-   - `MemoryStore`, `VectorStore`, `GitEngine` — не читают переменные окружения
-
-4. **VectorStore не сохраняет labelMap**
-   - При перезапуске теряется маппинг `labelId → symbolId`
-   - Нужна сериализация в JSON или SQLite
-
-5. **Нет SSE/WebSocket для real-time обновлений**
-   - `GET /task/:id` не возвращает логи и прогресс
-   - Для VSCode интеграции необходим streaming
-
-### 🟡 Важные (влияют на качество)
-
-6. **AST-парсер: наивное извлечение зависимостей**
-   - `extractDependenciesNaive()` собирает все идентификаторы, включая ключевые слова TS
-   - Нужен TypeChecker для реальных ссылок
-
-7. **Code Graph не персистентен**
-   - Граф живёт только в памяти, при перезапуске пересканирование
-   - Нужна сериализация в `data/graphs/`
-
-8. **Нет Ollama health check**
-   - Система не проверяет доступность Ollama перед запуском
-   - Нет fallback при недоступности
-
-9. **Router использует `/api/generate` вместо `/api/chat`**
-   - Ollama `/api/chat` лучше поддерживает system/user/assistant роли
-   - Текущий формат сообщений — наивная конкатенация
-
-10. **Job System: нет pause/resume**
-    - `MemoryQueue` поддерживает только `queued/running/completed/failed`
-    - Нет механизма паузы и возобновления задач
-
-11. **Task ID** генерируется через `Date.now()` — коллизии при concurrent requests
-
-### 🟢 Улучшения (polish)
-
-12. **Нет CORS middleware** на Fastify — нужен для обращений из браузера/VSCode webview
-13. **Нет `GET /health`** эндпоинта для мониторинга
-14. **Нет unit-тестов** — ни один пакет не имеет тестов
-15. **`pino-pretty`** нужно добавить в `devDependencies` пакета `shared`
-16. **Нет graceful shutdown** — worker не останавливается корректно при SIGTERM
-17. **Backup filename** включает полный путь с `/` заменённым на `_` — очень длинные имена, лучше использовать hash
-18. **Orchestrator не возвращает структурированный результат** — нет `plan`, `files_changed`, `test_results` в ответе API
-
----
-
-## Лицензия
-
-Private — Internal Use Only
+[MIT](LICENSE)
