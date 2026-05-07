@@ -48,3 +48,4 @@ coverage/
 # Temp
 tmp/
 .tmp/
+*.vsix
