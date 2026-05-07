@@ -19,6 +19,7 @@ import { partialFileSize, type PartialFile } from './partial-json.js';
 import {
   FileChange,
   config,
+  logger,
   taskEvents,
   taskLogger,
   withTaskContext,
@@ -91,6 +92,10 @@ export class Orchestrator {
     // where Coder/Fixer/Tester actually need to preserve imports/style.
     const conventions = this.getConventions();
     const items = await this.retriever.retrieveContextItems(description);
+    logger.info(
+      { taskId, retrievedFiles: [...new Set(items.map(i => i.filePath))] },
+      'RAG Planner retrieval',
+    );
     const ragSnippets = items
       .map(i => `// ${i.filePath}:${i.startLine}\n${i.text}`)
       .join('\n\n---\n\n');
