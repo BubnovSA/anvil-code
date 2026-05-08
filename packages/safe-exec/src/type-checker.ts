@@ -19,6 +19,31 @@ export class TypeChecker {
     return this.spawnWithTimeout('npx', ['--no-install', 'tsc', '--noEmit', '-p', tsconfig]);
   }
 
+  /**
+   * Run the full project typecheck but report only errors that originate in
+   * the specified files. Errors in other files are ignored — the caller only
+   * cares about what their edits broke, not pre-existing issues elsewhere.
+   *
+   * If the specified files have no errors (even if the project as a whole
+   * does), returns success:true so the pre-Reviewer check does not block a
+   * clean edit because of an unrelated existing failure.
+   */
+  async runOn(paths: string[]): Promise<ValidationResult> {
+    const result = await this.run();
+    if (result.success || result.skipped) return result;
+
+    // tsc error lines begin with the relative path: "src/foo.ts(1,2): error …"
+    const normalised = paths.map(p => p.replace(/\\/g, '/'));
+    const lines = result.output.split('\n');
+    const relevant = lines.filter(l => normalised.some(p => l.startsWith(p)));
+
+    if (relevant.length === 0) {
+      // Project has errors but none are in our changed files — treat as passed.
+      return { success: true, output: '', exitCode: 0, durationMs: result.durationMs };
+    }
+    return { ...result, output: relevant.join('\n') };
+  }
+
   private findTsconfig(): string | null {
     // Check root, then common monorepo layout
     const rootCfg = path.join(this.projectRoot, 'tsconfig.json');

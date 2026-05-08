@@ -8,6 +8,7 @@ export type TaskEventType =
   | 'step_complete'
   | 'step_fail'
   | 'step_skip'
+  | 'step_noop'
   | 'agent_stream'
   | 'coder_file_ready'
   | 'validation_start'

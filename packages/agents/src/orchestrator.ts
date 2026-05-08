@@ -132,7 +132,7 @@ export class Orchestrator {
     });
 
     const writtenFiles: string[] = [];
-    const { allFileChanges, completedSteps, failedSteps } = await this.executePlanParallel(
+    const { allFileChanges, completedSteps, failedSteps, stepFailures } = await this.executePlanParallel(
       taskId,
       plan.steps,
       mode,
@@ -140,7 +140,12 @@ export class Orchestrator {
     );
 
     if (completedSteps.size === 0) {
-      throw new Error(`All ${plan.steps.length} steps failed; aborting task ${taskId}.`);
+      const reasons = [...stepFailures.entries()]
+        .map(([id, msg]) => `Step ${id}: ${msg.slice(0, 120)}`)
+        .join('; ');
+      throw new Error(
+        `All ${plan.steps.length} steps failed${reasons ? ` — ${reasons}` : ''}.`,
+      );
     }
 
     if (failedSteps.size > 0) {
@@ -321,12 +326,13 @@ export class Orchestrator {
     steps: Array<{ id: string; description: string; dependencies: string[] }>,
     mode: 'fast'|'balanced'|'deep',
     log: ReturnType<typeof taskLogger>,
-  ): Promise<{ allFileChanges: FileChange[]; completedSteps: Set<string>; failedSteps: Set<string> }> {
+  ): Promise<{ allFileChanges: FileChange[]; completedSteps: Set<string>; failedSteps: Set<string>; stepFailures: Map<string, string> }> {
     detectCycles(steps);
 
     const allFileChanges: FileChange[] = [];
     const completedSteps = new Set<string>();
     const failedSteps = new Set<string>();
+    const stepFailures = new Map<string, string>();
     const remaining = new Map(steps.map(s => [s.id, s] as const));
     const inFlight = new Map<string, Promise<void>>();
     const parallelism = Math.max(1, config.agents.parallelism);
@@ -387,6 +393,7 @@ export class Orchestrator {
           const msg = err instanceof Error ? err.message : String(err);
           log.error({ stepId: step.id, error: msg }, 'Step failed — continuing with remaining steps');
           failedSteps.add(step.id);
+          stepFailures.set(step.id, msg);
           this.store.saveFailure(
             `step-failure:${step.id}:${msg.slice(0, 80)}`,
             'Step skipped after agent error; remaining steps continue',
@@ -449,7 +456,7 @@ export class Orchestrator {
       await Promise.race(inFlight.values());
     }
 
-    return { allFileChanges, completedSteps, failedSteps };
+    return { allFileChanges, completedSteps, failedSteps, stepFailures };
   }
 
   private async executeStep(
@@ -566,6 +573,20 @@ export class Orchestrator {
     void onCoderFile;
 
     let currentChanges: FileChange[] = [...codeChanges.files];
+
+    // v1.35 C1/C2 — fail fast when Coder produced nothing. Previously the step
+    // quietly completed with 0 changes (Reviewer approved an empty file list),
+    // leaving the task looking "completed" with no actual edits — L2.4 / L2.6.
+    if (currentChanges.length === 0) {
+      taskEvents.emitEvent({
+        taskId,
+        type: 'step_noop',
+        message: `Step ${step.id} produced no file changes`,
+        data: { stepId: step.id },
+      });
+      throw new Error(`Step ${step.id}: Coder produced no file changes`);
+    }
+
     // v1.32-c: skip Tester for refactor kinds. Refactor preserves behavior
     // — existing tests are the regression gate; generating new ones is wasted
     // work and risks regression-test drift.
@@ -584,6 +605,46 @@ export class Orchestrator {
       }
     } else {
       log.debug({ stepId: step.id }, 'Tester disabled via TESTER_ENABLED=false');
+    }
+
+    // v1.35 B2 — pre-Reviewer TS check. Run tsc against the changed files
+    // BEFORE the LLM judge so that parse/type errors are caught early and fed
+    // to the Fixer with exact compiler output, not vague LLM-inferred issues.
+    // Up to 2 attempts: Fixer on attempt 0 errors, then re-check; bail on 1.
+    // Only TS/TSX files are checked; JSON/YAML/MD changes are passed through.
+    const tsChangedPaths = currentChanges
+      .filter(c => (c.path.endsWith('.ts') || c.path.endsWith('.tsx')) && c.action !== 'delete')
+      .map(c => c.path);
+    if (tsChangedPaths.length > 0) {
+      for (let preAttempt = 0; preAttempt < 2; preAttempt++) {
+        const preCheck = await this.applyAndCheckTs(currentChanges);
+        if (preCheck.passed) break;
+        if (preAttempt === 1) {
+          throw new Error(
+            `Step ${step.id}: TS pre-check failed after fix retry — ${preCheck.output.slice(0, 300)}`,
+          );
+        }
+        log.warn(
+          { stepId: step.id, tscErrors: preCheck.output.slice(0, 300) },
+          'Pre-Reviewer TS errors — invoking Fixer',
+        );
+        const tscIssues = [`TypeScript compilation failed:\n${preCheck.output}`];
+        const fixResult = config.agents.toolCallingCoder
+          ? await runTaskAgent(
+              BUGFIX_SPEC,
+              {
+                stepDescription: step.description,
+                context: promptContext,
+                taskMode: mode,
+                issues: tscIssues,
+                currentFiles: currentChanges,
+              },
+              this.router,
+              this.writer.root,
+            )
+          : await this.fixer.execute(tscIssues, currentChanges, promptContext, mode);
+        currentChanges = mergeFixerChanges(currentChanges, fixResult.files);
+      }
     }
 
     let attempt = 0;
@@ -702,6 +763,58 @@ export class Orchestrator {
 
     const fixResult = await this.fixer.execute(issues, failedChanges, retryContext, mode);
     return fixResult.files;
+  }
+
+  /**
+   * Temporarily apply `changes` to disk, run `typeChecker.runOn` against the
+   * changed paths, then restore every file to its original state.
+   *
+   * This lets the pre-Reviewer check run tsc against actual on-disk content
+   * (required because tsc resolves imports from disk) without permanently
+   * mutating the working tree — the outer step-5 write still owns that.
+   *
+   * If a write fails (e.g. modify search-not-found) the file is skipped; tsc
+   * may then surface the error through another diagnostic. Restore is best-
+   * effort: a failure there is logged and swallowed to avoid masking the real
+   * pre-check result.
+   */
+  private async applyAndCheckTs(
+    changes: FileChange[],
+  ): Promise<{ passed: boolean; output: string }> {
+    const tsChanges = changes.filter(
+      c => (c.path.endsWith('.ts') || c.path.endsWith('.tsx')) && c.action !== 'delete',
+    );
+    if (tsChanges.length === 0) return { passed: true, output: '' };
+
+    const backups = new Map<string, string | null>();
+    try {
+      for (const change of tsChanges) {
+        const abs = path.resolve(this.writer.root, change.path);
+        backups.set(change.path, fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null);
+        try {
+          this.writer.execute(change);
+        } catch {
+          // Write error (e.g. search-not-found on modify) — leave file as-is;
+          // tsc will run on the original and may still surface useful output.
+        }
+      }
+      const result = await this.typeChecker.runOn(tsChanges.map(c => c.path));
+      return { passed: result.success || !!result.skipped, output: result.output };
+    } finally {
+      for (const [relPath, original] of backups) {
+        const abs = path.resolve(this.writer.root, relPath);
+        try {
+          if (original === null) {
+            if (fs.existsSync(abs)) fs.unlinkSync(abs);
+          } else {
+            fs.writeFileSync(abs, original, 'utf8');
+          }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn({ path: relPath, error: msg }, 'applyAndCheckTs: restore failed');
+        }
+      }
+    }
   }
 
   private async runValidationLoop(
