@@ -8,7 +8,7 @@
 
 ## v1.34.1 — Release prep: BUGFIX_SPEC fix + GitHub docs + .vsix (2026-05-08)
 
-BUGFIX_SPEC `WORKFLOW` шаг 2 расширен до 4-шагового алгоритма для тест-фейлов: (a) читаем тест → (b) идём по импортам → (c) ищем object literal → (d) добавляем **значение** (`field: value`), а не тип-аннотацию. Новый паттерн в `COMMON TS PATTERNS`: `as SomeType` не добавляет данные — только `field: value` в литерале. Адресует L4.1 r1 регрессию (Coder писал `} as User` без `createdAt`, Fixer в 3-х попытках повторял ту же аннотацию). **530/530 тестов (без изменений).**
+BUGFIX_SPEC `WORKFLOW` шаг 2 расширен до 4-шагового алгоритма для тест-фейлов: (a) читаем тест → (b) идём по импортам → (c) ищем object literal → (d) добавляем **значение** (`field: value`), а не тип-аннотацию. Новый паттерн в `COMMON TS PATTERNS`: `as SomeType` не добавляет данные — только `field: value` в литерале. Адресует L4.1 r1 регрессию (Coder писал `} as User` без `createdAt`, Fixer в 3-х попытках повторял ту же аннотацию). **530/530 тестов (без изменений). Bench v1.34.1 L4.1 ×3 = 3/3 ✅ (r1: 285s, r2: 60s, r3: 110s — все byte-perfect).**
 
 GitHub docs: README переписан на английский (user-facing: what it does, one-paragraph architecture, llama-swap quickstart, known limitations). Добавлены `LICENSE` (MIT) и `CONTRIBUTING.md`. Extension package.json: добавлены `repository` и `license` поля. `packages/vscode-extension/LICENSE` добавлен. `*.vsix` в `.gitignore`.
 

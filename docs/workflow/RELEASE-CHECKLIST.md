@@ -13,7 +13,7 @@
 - [x] `data/backups/**` excluded from indexing
 - [x] Qwen3 thinking mode fix (chat_template_kwargs)
 - [ ] L2.x smoke bench на sandbox с v1.34 (2–3 задачи, понять картину)
-- [x] L4.1 Fixer 2/3 → 3/3: micro-fix промпта (BUGFIX_SPEC WORKFLOW + COMMON TS PATTERNS) — **bench confirm pending**
+- [x] L4.1 Fixer 2/3 → 3/3: micro-fix промпта (BUGFIX_SPEC WORKFLOW + COMMON TS PATTERNS) — **3/3 ✅ confirmed**
 
 ## GitHub repo
 

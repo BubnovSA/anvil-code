@@ -4,7 +4,7 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.34.1 release prep done (2026-05-08). README/LICENSE/CONTRIBUTING ✅, .vsix clean ✅, BUGFIX_SPEC L4.1 micro-fix ✅ (bench pending). Осталось: L4.1 bench confirm 3/3, .vsix smoke test (live task), git tag + dev→main merge → **release 2026-05-16**.
+**Статус:** 🟢 v1.34.1 release prep done (2026-05-08). README/LICENSE/CONTRIBUTING ✅, .vsix clean ✅, BUGFIX_SPEC + L4.1 **3/3** ✅. Осталось: .vsix live smoke test, git tag + dev→main merge → **release 2026-05-16**.
 **Backend:** llama-swap (operator's proxy на `172.20.10.4:8080`), tool-calling Coder/Fixer дефолт.
 **Тесты:** 530/530 unit-tests, 12/12 пакетов собираются чисто.
 **Последнее обновление:** 2026-05-08.
@@ -83,7 +83,7 @@
 - [x] README.md user-facing (EN): quickstart, архитектура, known limitations
 - [x] LICENSE (MIT) + CONTRIBUTING.md
 - [x] .vsix: 0 предупреждений, 29KB; repository + license поля в extension package.json
-- [ ] L4.1 bench confirm (3 прогона после BUGFIX_SPEC fix)
+- [x] L4.1 bench confirm: **3/3** ✅ (r1: 285s, r2: 60s, r3: 110s — все byte-perfect: `} as User` → `createdAt: new Date().toISOString()`)
 
 #### v1.35 — Multi-hop transitive closure в code-graph (~3-5 дней) — ⏸ POST-RELEASE
 - [ ] При индексации compute closure(symbol, max_depth=3) — кладём в `dependencies_closure` поле
