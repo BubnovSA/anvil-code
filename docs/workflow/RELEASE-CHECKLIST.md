@@ -1,7 +1,7 @@
 # Release checklist — public GitHub OpenSource
 
 **Target:** 2026-05-16
-**Current readiness:** 75%
+**Current readiness:** 90%
 
 ---
 
@@ -20,28 +20,28 @@
 - [x] README.md — user-facing: что это, quickstart, архитектура, known limitations
 - [x] LICENSE (MIT)
 - [x] CONTRIBUTING.md
-- [ ] .env.example актуален (все переменные документированы)
-- [ ] .gitignore: *.gguf, models/, data/backups/, dist/, node_modules/
+- [x] .env.example актуален (все переменные документированы)
+- [x] .gitignore: *.gguf, models/, data/backups/, dist/, node_modules/
 - [ ] GitHub repo visibility → public
 
 ## VS Code extension
 
 - [x] Extension builds clean (`npm run build` в packages/vscode-extension)
 - [x] .vsix packaged (`vsce package` — 0 warnings, 29KB)
-- [ ] Smoke test: install from .vsix, connect to llama-swap, run a task end-to-end
-- [ ] README в packages/vscode-extension (install + connect)
+- [x] Smoke test: install from .vsix, connect to llama-swap, run a task end-to-end
+- [x] README в packages/vscode-extension (install + connect)
 
 ## Documentation
 
 - [x] Quickstart в README: llama-swap → API → extension → first task
 - [x] Known limitations секция в README
-- [ ] docs/llama-api-reference.md актуален
+- [x] docs/llama-api-reference.md актуален
 
 ## Pre-release sync
 
 - [x] CHANGELOG.md: v1.34 + v1.34.1 записи добавлены
 - [x] ROADMAP.md актуален (v1.35 помечена post-release, v1.34.1 тикнута)
-- [ ] git tag v1.34 на dev перед мержем в main
+- [ ] git tag v1.34 на dev перед мержем в main  ← next
 - [ ] dev → main merge
 
 ---

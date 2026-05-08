@@ -15,6 +15,10 @@ data/
 *.dat
 *.hnsw
 
+# Local model weights (do not commit GGUFs)
+*.gguf
+models/
+
 # Backups (generated at runtime)
 backups/
 
