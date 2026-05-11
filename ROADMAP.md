@@ -4,10 +4,12 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.35 done (2026-05-11). Pre-Reviewer TS check ✅, Gemma 4 26B Coder ✅, L2.x **7/8** (AC4) ✅. Осталось: git tag v1.35 + push → release.
-**Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`). qwen-coder-32k как fallback.
+**Статус:** 🟢 v1.37 done (2026-05-11). TESTER_ENABLED=true работает ✅. L5.x bench 14/16 (87.5%) ✅. Cumulative mode 5/6 ✅.
+**Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
+**TESTER_ENABLED:** true — 28/28 vitest tests на DELETE endpoint. Trade-off: невалидные тесты (_clear) блокируют.
+**RAG_MAX_CONTEXT_TOKENS:** 3000 (работает на sandbox + 94-файловый target).
 **Backend:** llama-swap (`172.20.10.4:8080`), tool-calling Coder/Fixer дефолт.
-**Тесты:** 530/530 unit-tests, 12/12 пакетов собираются чисто.
+**Тесты:** 530/530 unit-tests, 12/12 пакетов чисто.
 **Последнее обновление:** 2026-05-11.
 
 ---
@@ -99,11 +101,25 @@
 - [x] **Design:** [docs/designs/v1.35-coder-reviewer-fix.md](docs/designs/v1.35-coder-reviewer-fix.md)
 - [x] **Bench:** [2026-05-11-v1.35-gemma-l2x.md](docs/benchmarks/runs/2026-05-11-v1.35-gemma-l2x.md)
 
-#### v1.36 — L3.x improvements (📋 next)
+#### v1.36 — Lenient Reviewer + regression — ✅ 2026-05-11
 
-- [ ] Reviewer file-context: дать Reviewer полный контент изменённых файлов (не только diff) → менее строгий reject на архитектурных задачах
-- [ ] Planner decomposition hint: для задач с "create + register" генерировать 2 шага
-- [ ] rag-system-target setup: master→main, tsc symlink, правильная индексация для benchmark на 94-файловом repo
+- [x] Reviewer prompt: BLOCKING only — не отклонять за стиль/архитектуру
+- [x] L1.x 3/3 ✅, L4.x 1/1 ✅ regression с Gemma
+
+#### v1.37 — TESTER_ENABLED + L5.x bench — ✅ 2026-05-11
+
+- [x] TesterAgent: правило "нельзя пустой describe", Fastify pattern fix
+- [x] TestRunner: фильтр "No test found in suite"
+- [x] L5.x comprehensive bench: 14/16 (87.5%)
+- [x] Cumulative mode: 5/6 ✅, race condition documented
+- [x] rag-system-target setup: main branch, tsconfig, npm build
+
+#### v1.38 — Next (📋)
+
+- [ ] BUGFIX_SPEC: паттерн для `_clear()` → `UserService.list().forEach(u => UserService.delete(u.id))`
+- [ ] Cumulative pipeline: explicit merge-wait между задачами в worker
+- [ ] Другой реальный репозиторий (200+ файлов, не наш код)
+- [ ] Push + GitHub release
 
 ### Phase 5 — Production storage (📋 после Phase 4)
 

@@ -6,6 +6,18 @@
 
 ---
 
+## v1.37 — TESTER_ENABLED=true fix + comprehensive bench (2026-05-11)
+
+**TesterAgent fixes (3 патча):** (1) Правило 9 — каждый testFiles entry должен содержать хотя бы один `it()`; пустой `describe` вызывает "No test found" в vitest → теперь явно запрещён. (2) Fastify test pattern — `FastifyInstance` вместо `ReturnType<typeof Fastify>` (TS1361 в некоторых конфигурациях). (3) TestRunner: фильтр "No test found in suite" — артефакт TesterAgent, не реальный тест-фейл; не блокирует коммит.
+
+**Результат:** TESTER_ENABLED=true теперь работает — DELETE endpoint получил 239 строк корректных vitest-тестов (28/28 pass, `app.inject()`, интеграционные). Trade-off: невалидные тесты (e.g. `_clear()`) блокируют даже правильный код — следующий фикс в BUGFIX_SPEC.
+
+**L5.x comprehensive benchmark:** 14/16 (87.5%) — sandbox 9/10, target 5/6. Ceiling: 1-4 файла ~90%, 5+ архитектурный ~30-50%. D1 SSE ✅, D2 CQRS ❌ (Reviewer правильно блокирует). Design: [v1.37-l5x-comprehensive-bench.md](docs/designs/v1.37-l5x-comprehensive-bench.md). Bench: [2026-05-11-v1.37-l5x-comprehensive.md](docs/benchmarks/runs/2026-05-11-v1.37-l5x-comprehensive.md).
+
+**Cumulative mode test:** 5/6 ✅ — pipeline накапливает изменения, merge conflicts разрешаются, Reviewer блокирует плохой код на сложном накопленном стейте. Race condition при быстрой подаче задач требует явного merge-wait.
+
+---
+
 ## v1.36 — Lenient Reviewer + regression tests (2026-05-11)
 
 **Reviewer prompt rewrite:** Reviewer (qwen3) переориентирован с "correctness, security, quality" на строгое разделение: BLOCKING (неверная реализация, runtime bug, сломан существующий код) vs NON-BLOCKING (стиль, архитектура, type annotations, edge cases). Результат: L3.4 Zod validation (4 файла) перешла из "Reviewer 3× reject" в коммит. L3.3 (repository pattern) теперь падает корректно на validation/tests, а не на Reviewer.
