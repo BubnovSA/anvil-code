@@ -56,6 +56,10 @@ Rules:
    A describe block with only beforeEach and no it() tests is NOT acceptable — it causes
    vitest to fail with "No test found in suite". If you cannot write meaningful tests for
    a given file, omit it from testFiles entirely rather than producing an empty describe.
+10. Test isolation — clearing in-memory state: NEVER call _clear() or _reset() — these
+    methods do not exist. To clear users between tests, call the service's own public
+    methods: const users = UserService.list(); for (const u of users) UserService.delete(u.id);
+    Or use beforeEach to create fresh state via the public API only.
 
 Output ONLY valid JSON:
 { "testFiles": [{ "path": "src/__tests__/foo.test.ts", "content": "...", "action": "create" }] }`;
