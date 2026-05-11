@@ -6,6 +6,21 @@
 
 ---
 
+## v1.36 — Lenient Reviewer + regression tests (2026-05-11)
+
+**Reviewer prompt rewrite:** Reviewer (qwen3) переориентирован с "correctness, security, quality" на строгое разделение: BLOCKING (неверная реализация, runtime bug, сломан существующий код) vs NON-BLOCKING (стиль, архитектура, type annotations, edge cases). Результат: L3.4 Zod validation (4 файла) перешла из "Reviewer 3× reject" в коммит. L3.3 (repository pattern) теперь падает корректно на validation/tests, а не на Reviewer.
+
+**Regression test Gemma 4 26B (L1.x + L4.x):**
+- L1.1 `/health` ✅, L1.2 Zod validation ✅, L1.3 `/stats` + accountAge ✅ (correct `.getTime()`)
+- L4.1 bug fix ✅ (createdAt restored byte-perfect, bonus: 201 status в route)
+- **4/4 без регрессий** — Gemma работает на всех уровнях сложности
+
+**Bench Этап 2 (L3.x с новым Reviewer):**
+- L3.3 (repository pattern, 5 файлов): Reviewer одобряет → validation/tests ловят несовместимость DI → commit_skipped (правильное поведение)
+- L3.4 (Zod schemas, 4 файла): **✅ коммит** — 3 файла + новый schemas/users.ts
+
+---
+
 ## v1.35 — Pre-Reviewer TS check + Gemma 4 Coder (2026-05-11) — L2.x unblocked 0/8→7/8
 
 **Pipeline:** `TypeChecker.runOn(paths[])` добавлен в `safe-exec` — запускает полный `tsc --noEmit` на проекте и фильтрует output к изменённым файлам. Вызывается внутри `executeStep` после Coder, до Reviewer (до 2 Fixer-попыток). Ловит parse/type ошибки раньше LLM-judge'а (G1). Fail-fast на `codeChanges.files.length === 0` — эмитирует `step_noop` SSE event и бросает (G2). `executePlanParallel` накапливает `stepFailures: Map<string,string>` — "All N steps failed" теперь включает `"Step s1: <reason>"` (G3). `FEATURE_SPEC.pruneHistory: false→true` — устранён context overflow (36k tokens). `.js` суффикс в FEATURE_SPEC пример + TS2307/TS2339 паттерны в BUGFIX_SPEC. **+4 mock-based unit-tests TypeChecker.runOn, 530/530.**
