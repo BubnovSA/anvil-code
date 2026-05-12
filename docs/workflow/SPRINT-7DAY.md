@@ -10,8 +10,8 @@
 
 | День | Статус | Ключевой результат |
 |---|---|---|
-| 1 — Диагностика | ⬜ | failure patterns на реальном репо |
-| 2 — Build + Rules | ⬜ | npm run build в pipeline, .claude/rules.md |
+| 1 — Диагностика | ✅ | 0/18 commits, 5 паттернов задокументированы, баг Promise.race исправлен |
+| 2 — Build + Rules | ✅ | 6/16 commits (38%), baseline detection, context fixes, validation scoped to prod files |
 | 3 — Cumulative pipeline | ⬜ | 10 задач автономно без ручного merge |
 | 4 — Scaffold mode | ⬜ | "создай проект" → working build |
 | 5 — VSCode extension | ⬜ | full workflow только через extension |

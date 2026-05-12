@@ -27,7 +27,7 @@ import type { CodeSymbol } from './types.js';
 // ~6KB even with the old cap, hitting truncation at 60% of files. 16000 bytes
 // (~4000 tokens) fits the rag-system fully and leaves room for slightly larger
 // repos before truncation kicks in.
-const DEFAULT_MAX_BYTES = 16000;
+const DEFAULT_MAX_BYTES = 5000;  // was 16000; real repos (100+ files) overflow 32k model ctx
 const SIGNATURE_LINE_MAX = 120;
 const MAX_MEMBERS_PER_SYMBOL = 30;
 

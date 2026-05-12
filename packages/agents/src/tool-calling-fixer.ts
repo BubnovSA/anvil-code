@@ -36,8 +36,8 @@ import type { FixerOutput } from './fixer.js';
 // Numbers picked empirically: on 25 max calls, K=8 means we always show the
 // last 8 round-trips even when the loop has run further. System+user adds 2;
 // total kept = 2 + 16 = 18 messages, well under any model's context limit.
-const HISTORY_PRUNE_THRESHOLD = 22; // start pruning once total messages exceed this
-const HISTORY_KEEP_TAIL = 16;       // keep this many trailing messages (8 round-trips)
+const HISTORY_PRUNE_THRESHOLD = 8;  // start pruning once total messages exceed this — was 22
+const HISTORY_KEEP_TAIL = 4;        // keep this many trailing messages (2 round-trips) — was 16
 const HISTORY_KEEP_HEAD = 2;        // keep system prompt + initial user message
 
 export function pruneHistory(messages: ToolLoopMessage[]): boolean {

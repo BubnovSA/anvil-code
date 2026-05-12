@@ -47,6 +47,14 @@ import type { LocateResult } from './structural-edits.js';
 export const PATHOLOGY_THRESHOLD = 5;
 
 /**
+ * Maximum lines returned by read_file. Large files cause context overflow
+ * (gemma-4-26b ctx=32768): 400-line file ≈ 4k tokens vs 2k at 200 lines.
+ * When truncated, the model sees a note and can request a specific line range
+ * via replace_in_file if it needs lower content.
+ */
+export const MAX_READ_LINES = 350;
+
+/**
  * Maximum nudge cycles before the loop hard-bails. After 2 strikes (10
  * same-fingerprint errors with one nudge between them), the model has
  * had a clean chance to switch strategy and didn't take it; we exit and
@@ -113,6 +121,14 @@ export interface WritePolicy {
   allowed: Set<string>;
   /** Hardcoded patterns blocked unless the path appears in `allowed`. */
   forbiddenPatterns: RegExp[];
+  /**
+   * RAG-retrieved files passed as context snippets. These can be read freely
+   * (to understand structure/patterns) but reading them does NOT grant write
+   * access. Only files explicitly named in the task description (policy.allowed)
+   * may be written. This prevents the LLM from destructively modifying existing
+   * files that RAG surfaced as "related" when the task only asked to create new ones.
+   */
+  ragReadOnlyPaths?: Set<string>;
 }
 
 export function isWriteAllowed(
@@ -133,8 +149,21 @@ export function isWriteAllowed(
   }
   // Permissive mode: no static allowlist enforcement, only forbidden patterns gate writes.
   if (policy.allowed.size === 0) return { ok: true };
-  // Static allowlist hit.
+  // Static allowlist hit — task description explicitly names this file.
   if (policy.allowed.has(path)) return { ok: true };
+  // RAG read-only guard: files provided as RAG context snippets can be freely
+  // inspected (read_file is allowed) but reading them never grants write access.
+  // This prevents the LLM from destructively rewriting existing implementations
+  // that RAG surfaced as "related" when the task only asked for a new file.
+  if (policy.ragReadOnlyPaths?.has(path)) {
+    return {
+      ok: false,
+      reason:
+        `path "${path}" is a RAG context file (read-only for this task). ` +
+        `You can read it to understand patterns, but to write to it the task description must explicitly name it. ` +
+        `Focus your changes on the paths listed in "Allowed write targets".`,
+    };
+  }
   // v1.32-a.1 dynamic scope: a file the model has explicitly read in the
   // current loop is granted write access. The read is a deliberate gesture
   // that says "I want to inspect this and possibly edit it." Forbidden
@@ -586,10 +615,15 @@ export function dispatchToolCall(
       if (content === null) return { text: `error: file does not exist: ${filePath}`, done: false };
       // Number lines for the model — makes replace_in_file coords unambiguous.
       const lines = content.split('\n');
-      const numbered = lines
+      const truncated = lines.length > MAX_READ_LINES;
+      const shown = truncated ? lines.slice(0, MAX_READ_LINES) : lines;
+      const numbered = shown
         .map((line, i) => `${String(i + 1).padStart(4, ' ')} | ${line}`)
         .join('\n');
-      return { text: `# ${filePath} (${lines.length} lines)\n${numbered}`, done: false };
+      const suffix = truncated
+        ? `\n[Truncated: showing lines 1-${MAX_READ_LINES} of ${lines.length}. Use replace_in_file with known line numbers for lower sections, or read a specific range via replace_in_file coordinates.]`
+        : '';
+      return { text: `# ${filePath} (${lines.length} lines)\n${numbered}${suffix}`, done: false };
     }
     case 'replace_in_file': {
       const filePath = String(args.path ?? '');

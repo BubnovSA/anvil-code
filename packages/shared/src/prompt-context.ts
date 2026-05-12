@@ -24,8 +24,8 @@ export interface PromptContextInput {
   repoMap?: string;
 }
 
-const MAX_BYTES_PER_FILE = 8 * 1024;
-const MAX_TOTAL_BYTES = 32 * 1024;
+const MAX_BYTES_PER_FILE = 3 * 1024;  // 3KB per file (~700 tokens) — was 8KB; large repos fill 32k ctx
+const MAX_TOTAL_BYTES = 10 * 1024;   // 10KB total (~2500 tokens) — was 32KB; real repos overflow 32k ctx
 
 /**
  * Build a structured context block for code-generating agents (Coder, Fixer, Tester).

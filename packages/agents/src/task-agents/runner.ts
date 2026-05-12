@@ -52,9 +52,13 @@ export async function runTaskAgent(
   const ws = new WorkingSet(projectRoot);
 
   const allowed = spec.buildAllowedSet(input);
+  const ragReadOnlyPaths = input.ragReadOnlyPaths && input.ragReadOnlyPaths.length > 0
+    ? new Set(input.ragReadOnlyPaths.filter(p => !allowed.has(p)))
+    : undefined;
   const policy: WritePolicy = {
     allowed,
     forbiddenPatterns: spec.forbiddenPatterns,
+    ragReadOnlyPaths,
   };
 
   const messages: ToolLoopMessage[] = [

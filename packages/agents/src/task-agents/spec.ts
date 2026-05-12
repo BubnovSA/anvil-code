@@ -18,6 +18,13 @@ export interface TaskAgentInput {
   // BugFix validation mode (a):
   issues?: string[];
   currentFiles?: FileChange[];
+  /**
+   * File paths that RAG surfaced as context snippets. Passed to the WritePolicy
+   * as read-only: the LLM can inspect them but cannot write to them unless they
+   * are also named in the task description (policy.allowed). Prevents destructive
+   * side-effect edits to "related" files that the LLM reads for pattern reference.
+   */
+  ragReadOnlyPaths?: string[];
 }
 
 export interface TaskAgentOutput {
