@@ -1,0 +1,458 @@
+openapi: "3.1.0"
+info:
+  title: Anvil-Code API
+  version: "1.38.0"
+  description: |
+    HTTP API for the Anvil-Code autonomous coding agent.
+
+    All endpoints accept and return `application/json`.
+    Tasks are processed asynchronously — submit via `POST /task`, then either
+    poll `GET /task/:id` or stream events in real time from `GET /task/:id/stream`.
+
+    Rate limit: 60 requests / minute per IP.
+  license:
+    name: MIT
+    url: https://github.com/BubnovSA/anvil-code/blob/main/LICENSE
+
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+
+tags:
+  - name: tasks
+    description: Submit and monitor coding tasks
+  - name: projects
+    description: Register and manage target repositories
+  - name: indexing
+    description: Trigger and monitor codebase indexing
+  - name: health
+    description: Server and LLM backend liveness
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Server liveness check
+      description: Returns server status and whether the configured LLM backend is reachable.
+      responses:
+        "200":
+          description: Server is running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
+                backend: llamacpp
+                backendUp: true
+                uptime: 3847
+
+  /task:
+    post:
+      tags: [tasks]
+      summary: Submit a coding task
+      description: |
+        Enqueues a new task for the agent pipeline. Returns immediately with a `task_id`.
+        The task runs asynchronously — stream progress via `GET /task/{task_id}/stream`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskRequest"
+            examples:
+              feature:
+                summary: Add a new endpoint
+                value:
+                  task: "Add a GET /stats endpoint that returns total user count and registration date range"
+                  mode: balanced
+                  project: "917e347a4b0f"
+              bugfix:
+                summary: Fix a failing test
+                value:
+                  task: "Fix the failing test in users.test.ts — createdAt is not set in UserService.create()"
+                  mode: balanced
+      responses:
+        "202":
+          description: Task enqueued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTaskResponse"
+              example:
+                task_id: "tsk-1715600000000"
+                project_id: "917e347a4b0f"
+                status: queued
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /task/{id}:
+    get:
+      tags: [tasks]
+      summary: Get task status
+      description: Returns the current status and result of a task. For live progress, use the SSE stream endpoint.
+      parameters:
+        - $ref: "#/components/parameters/taskId"
+      responses:
+        "200":
+          description: Task found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskStatusResponse"
+              example:
+                task_id: "tsk-1715600000000"
+                project_id: "917e347a4b0f"
+                status: completed
+                result: null
+                logs: []
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /task/{id}/stream:
+    get:
+      tags: [tasks]
+      summary: Stream task events (SSE)
+      description: |
+        Server-Sent Events stream for a task or indexing job. Replays history for
+        late subscribers, then pushes live events until the terminal event (`done` or `error`).
+
+        Each SSE frame has the format:
+        ```
+        event: <type>
+        data: <TaskEvent JSON>
+        ```
+
+        Event types: `queued`, `running`, `plan`, `step_start`, `step_complete`,
+        `step_fail`, `step_skip`, `coder_file_ready`, `validation_start`,
+        `validation_pass`, `validation_fail`, `commit`, `commit_skipped`,
+        `commit_partial`, `done`, `error`, `index_start`, `index_file`,
+        `index_skip`, `index_done`.
+
+        The stream also works for indexing jobs — use the `index_id` returned
+        by `POST /index` as the `:id` parameter.
+      parameters:
+        - $ref: "#/components/parameters/taskId"
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Newline-delimited SSE frames
+
+  /tasks:
+    get:
+      tags: [tasks]
+      summary: List recent tasks
+      description: Returns up to 50 most recent tasks for the specified project.
+      parameters:
+        - name: project
+          in: query
+          description: Project ID to filter by. Defaults to the default project.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project_id:
+                    type: string
+                  tasks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TaskRecord"
+
+  /project:
+    post:
+      tags: [projects]
+      summary: Register a project
+      description: |
+        Registers a git repository as a project. The root must be an absolute path
+        on the server's filesystem. Returns the project object with its assigned `id`,
+        which is used in subsequent task and index calls.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterProjectRequest"
+            example:
+              root: "/absolute/path/to/your/repo"
+              name: "my-api"
+      responses:
+        "201":
+          description: Project registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+              example:
+                id: "917e347a4b0f"
+                name: "my-api"
+                root: "/absolute/path/to/your/repo"
+                createdAt: 1715600000000
+                lastAccessedAt: 1715600000000
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects:
+    get:
+      tags: [projects]
+      summary: List all registered projects
+      responses:
+        "200":
+          description: Project list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Project"
+
+  /project/{id}:
+    get:
+      tags: [projects]
+      summary: Get a project by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "917e347a4b0f"
+      responses:
+        "200":
+          description: Project found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /index:
+    post:
+      tags: [indexing]
+      summary: Index a project's codebase
+      description: |
+        Triggers AST parsing, embedding, and HNSW index build for the project.
+        Returns an `index_id` immediately — stream progress via `GET /task/{index_id}/stream`.
+
+        Indexing runs in the background. Events: `index_start`, `index_file` (high-frequency,
+        not stored in history), `index_skip`, `index_done`.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                project:
+                  type: string
+                  description: Project ID. Defaults to the default project.
+                root:
+                  type: string
+                  description: Override root path for this index run.
+            example:
+              project: "917e347a4b0f"
+      responses:
+        "202":
+          description: Indexing started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexResponse"
+              example:
+                index_id: "idx-1715600000000"
+                project_id: "917e347a4b0f"
+                root: "/absolute/path/to/your/repo"
+        "404":
+          description: Project not registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  parameters:
+    taskId:
+      name: id
+      in: path
+      required: true
+      description: Task ID returned by `POST /task`, or index ID returned by `POST /index`.
+      schema:
+        type: string
+      example: "tsk-1715600000000"
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, backend, backendUp, uptime]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        backend:
+          type: string
+          enum: [llamacpp, ollama]
+        backendUp:
+          type: boolean
+          description: Whether the configured LLM endpoint responded to a health check.
+        uptime:
+          type: integer
+          description: Server uptime in seconds.
+
+    CreateTaskRequest:
+      type: object
+      required: [task]
+      properties:
+        task:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Plain-English task description.
+        mode:
+          type: string
+          enum: [fast, balanced, deep]
+          default: balanced
+          description: |
+            `fast` — skip Tester, single Fixer attempt, smaller retrieval window.
+            `balanced` — Tester on, Fixer ×3, full retrieval (default).
+            `deep` — larger retrieval window, extra Architect pass.
+        project:
+          type: string
+          description: Project ID. Defaults to the server's default project (`PROJECT_ROOT`).
+
+    CreateTaskResponse:
+      type: object
+      required: [task_id, project_id, status]
+      properties:
+        task_id:
+          type: string
+        project_id:
+          type: string
+        status:
+          type: string
+          enum: [queued]
+
+    TaskStatusResponse:
+      type: object
+      required: [task_id, project_id, status]
+      properties:
+        task_id:
+          type: string
+        project_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, completed, failed]
+        result:
+          type: string
+          nullable: true
+          description: Human-readable summary of partial completion, or null on full success.
+        logs:
+          type: array
+          items:
+            type: string
+          description: Reserved for future use. Always empty in v1.38.
+
+    TaskRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, completed, failed]
+        result:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    RegisterProjectRequest:
+      type: object
+      required: [root]
+      properties:
+        root:
+          type: string
+          description: Absolute filesystem path to the git repository on the server.
+        name:
+          type: string
+          description: Display name. Defaults to the last path segment.
+
+    Project:
+      type: object
+      required: [id, name, root, createdAt, lastAccessedAt]
+      properties:
+        id:
+          type: string
+          description: 12-character hex project ID.
+        name:
+          type: string
+        root:
+          type: string
+        createdAt:
+          type: integer
+          description: Unix timestamp (ms).
+        lastAccessedAt:
+          type: integer
+          description: Unix timestamp (ms).
+
+    IndexResponse:
+      type: object
+      required: [index_id, project_id, root]
+      properties:
+        index_id:
+          type: string
+          description: Use as `:id` in `GET /task/{id}/stream` to follow indexing progress.
+        project_id:
+          type: string
+        root:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        details:
+          description: Zod validation issues, present on 400 responses.

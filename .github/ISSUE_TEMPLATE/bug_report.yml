@@ -1,0 +1,71 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing a bug, check [BENCHMARK.md](../../BENCHMARK.md) — some failure modes are documented known limitations.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: "The Coder produced an empty commit even though the task description was valid."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      placeholder: "A committed file containing the new middleware."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact task string, mode, and project size if relevant.
+      placeholder: |
+        1. POST /task with `{"task": "...", "mode": "balanced"}`
+        2. Stream events via GET /task/:id/stream
+        3. See event: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: sse-stream
+    attributes:
+      label: SSE event log (optional but very helpful)
+      description: Paste the output from `curl -N http://localhost:3000/task/<id>/stream`
+      render: text
+
+  - type: dropdown
+    id: llm-model
+    attributes:
+      label: LLM_LARGE_MODEL
+      options:
+        - gemma (recommended)
+        - qwen-coder-long
+        - qwen-coder
+        - deepseek
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: "v1.38 / git rev-parse --short HEAD"
+    validations:
+      required: true
+
+  - type: input
+    id: project-size
+    attributes:
+      label: Target project size (approx. file count)
+      placeholder: "~50 TS files"
