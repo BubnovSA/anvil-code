@@ -644,7 +644,15 @@ export class Orchestrator {
     if (config.agents.testerEnabled && stepKind !== 'refactor') {
       try {
         const testChanges = await this.tester.execute(codeChanges.files, reviewContext, mode);
-        currentChanges.push(...testChanges.testFiles);
+        // v1.40-a — validate generated test files with tsc before adding them to
+        // the pipeline. TesterAgent sometimes emits code with undeclared variables
+        // or wrong Fastify patterns that cause validation failures later (L1.1 r2
+        // and L4.1 r1 in v1.39 bench: "body is not defined", stale-list assertions).
+        // We apply files to disk, run typeChecker.runOn(testPaths), and discard any
+        // file whose path appears in tsc error output. Tester remains best-effort:
+        // partial success (some files valid, some not) is allowed.
+        const validTestFiles = await this.validateAndFilterTestFiles(testChanges.testFiles, log);
+        currentChanges.push(...validTestFiles);
       } catch (e) {
         // Tester is best-effort. A bad LLM JSON or schema mismatch must not blow up
         // the whole step — Coder's output is still valuable on its own. Reviewer
@@ -899,6 +907,96 @@ export class Orchestrator {
           logger.warn({ path: relPath, error: msg }, 'applyAndCheckTs: restore failed');
         }
       }
+    }
+  }
+
+  /**
+   * v1.40-a — Apply TesterAgent-generated files to disk, run tsc once against
+   * all test paths, and return only the files whose path does NOT appear in the
+   * error output. Files with TS errors are removed from disk and logged. This
+   * catches "body is not defined"-style bugs before they reach validation, where
+   * they would block a commit with a correct production change underneath.
+   *
+   * Operates entirely inside the existing writer root (same as applyAndCheckTs).
+   * Never throws — failures degrade gracefully to "no test files" for this step.
+   */
+  private async validateAndFilterTestFiles(
+    testFiles: FileChange[],
+    log: ReturnType<typeof taskLogger>,
+  ): Promise<FileChange[]> {
+    if (testFiles.length === 0) return [];
+
+    const tsTestFiles = testFiles.filter(
+      f => f.path.endsWith('.ts') || f.path.endsWith('.tsx'),
+    );
+    if (tsTestFiles.length === 0) return testFiles; // no TS to check — pass through
+
+    const backups = new Map<string, string | null>();
+    const written: string[] = [];
+
+    try {
+      for (const file of tsTestFiles) {
+        const abs = path.resolve(this.writer.root, file.path);
+        backups.set(file.path, fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null);
+        try {
+          this.writer.execute(file);
+          written.push(file.path);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn({ path: file.path, error: msg }, 'TesterAgent file write failed — discarding');
+        }
+      }
+
+      if (written.length === 0) return [];
+
+      const checkResult = await this.typeChecker.runOn(written);
+      if (checkResult.success || checkResult.skipped) {
+        // All written test files passed tsc — keep on disk, add to pipeline.
+        return testFiles;
+      }
+
+      // Parse which paths appear in error lines and discard them.
+      const errorLines = checkResult.output.split('\n');
+      const badPaths = new Set<string>();
+      for (const filePath of written) {
+        const normalised = filePath.replace(/\\/g, '/');
+        if (errorLines.some(l => l.replace(/\\/g, '/').startsWith(normalised))) {
+          badPaths.add(filePath);
+        }
+      }
+
+      if (badPaths.size > 0) {
+        log.warn(
+          { badFiles: [...badPaths], firstError: checkResult.output.slice(0, 300) },
+          'TesterAgent: discarding test files with TS errors',
+        );
+      }
+
+      // Restore bad files to their original state (delete if they were new).
+      for (const filePath of badPaths) {
+        const abs = path.resolve(this.writer.root, filePath);
+        const original = backups.get(filePath) ?? null;
+        try {
+          if (original === null) { if (fs.existsSync(abs)) fs.unlinkSync(abs); }
+          else fs.writeFileSync(abs, original, 'utf8');
+        } catch (err: unknown) {
+          log.warn({ path: filePath, error: String(err) }, 'TesterAgent: restore failed after discard');
+        }
+      }
+
+      return testFiles.filter(f => !badPaths.has(f.path));
+    } catch (err: unknown) {
+      // Last-resort catch: tsc itself crashed or an unexpected error. Fall back
+      // to no test files rather than blocking the step.
+      log.warn({ error: String(err) }, 'TesterAgent validation check failed — skipping all test files');
+      for (const [relPath, original] of backups) {
+        const abs = path.resolve(this.writer.root, relPath);
+        try {
+          if (original === null) { if (fs.existsSync(abs)) fs.unlinkSync(abs); }
+          else fs.writeFileSync(abs, original, 'utf8');
+        } catch { /* ignore restore errors */ }
+      }
+      return [];
     }
   }
 

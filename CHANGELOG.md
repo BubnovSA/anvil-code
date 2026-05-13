@@ -5,6 +5,14 @@
 
 ---
 
+## v1.40 — TesterAgent post-generation TS validation (2026-05-14)
+
+**Root cause (v1.39 bench):** TesterAgent-generated test files bypassed TypeScript checking entirely — `isTestPath` filter in the pre-Reviewer TS check excluded them. `body is not defined` (L1.1 r2) and stale-list assertion (L4.1 r1) reached validation and blocked commits on correct production changes.
+
+**Fix:** `Orchestrator.validateAndFilterTestFiles()` — after `tester.execute()`, writes test files to disk, runs `typeChecker.runOn(testPaths)` once, parses error output by file path, discards any file whose path appears in errors and restores disk state. Files that pass remain on disk and proceed through the pipeline. Tester stays best-effort: partial success (some valid, some discarded) is fine. TesterAgent prompt extended with rules 11–12: explicit ban on undeclared variable access (`body` before assignment) and fragile exact-length list assertions without controlled state. **550/550 unit tests, 12/12 packages.**
+
+---
+
 ## v1.39 — Cumulative mode, validation abort guard, Reviewer-reject Fixer (2026-05-14)
 
 **v1.39-a — Cumulative merge-wait + noop detection:** `CUMULATIVE_MODE=true` (env, default off) makes each successful task ff-merge its `auto/task-*` branch into `auto/cumulative` (configurable via `CUMULATIVE_BRANCH`). Next task forks from accumulated state instead of racing against `defaultBranch`. On non-ff conflict: `cumulative_merge_failed` event fired, branch retained for manual review, task still completes as `done`. `NoopStepError` added to distinguish "Coder 0 files" from generic step failures; `done.data.noopStepIds[]` exposed for bench analytics. `TaskEventType` extended with `cumulative_merged`, `cumulative_merge_failed`. +9 unit tests (5 git-engine, 4 orchestrator).

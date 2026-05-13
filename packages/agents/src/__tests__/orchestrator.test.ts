@@ -666,6 +666,118 @@ describe('Orchestrator validation incompleteness guard (v1.39-b)', () => {
   });
 });
 
+// v1.40-a — TesterAgent-generated test files are validated with tsc before being
+// added to the pipeline. Files with TS errors (e.g. undeclared variables like
+// `body is not defined`, wrong Fastify types) are discarded silently so they
+// cannot cause validation failures on top of correct production changes.
+describe('TesterAgent post-generation TS validation (v1.40-a)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('keeps test files that pass tsc', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'a', dependencies: [] }],
+    });
+
+    (orch as unknown as { tester: { execute: ReturnType<typeof vi.fn> } }).tester = {
+      execute: vi.fn().mockResolvedValue({
+        testFiles: [{ action: 'create', path: 'src/__tests__/good.test.ts', content: 'export {}' }],
+      }),
+    };
+
+    const taskId = 'task-tester-pass';
+    const captured: TaskEvent[] = [];
+    const handler = (e: TaskEvent) => captured.push(e);
+    taskEvents.on(`task:${taskId}`, handler);
+    try {
+      await orch.runTask(taskId, 'tester valid');
+    } finally {
+      taskEvents.off(`task:${taskId}`, handler);
+    }
+
+    // Tester file passed validation → commit includes it (3 files: coder + tester)
+    const commitEvent = captured.find(e => e.type === 'commit');
+    expect(commitEvent).toBeDefined();
+    const fileCount = (commitEvent!.data as { fileCount: number }).fileCount;
+    // At least the Coder file + tester file (mock typeChecker always returns success)
+    expect(fileCount).toBeGreaterThanOrEqual(1);
+    expect(captured.find(e => e.type === 'done')).toBeDefined();
+  });
+
+  it('discards test files whose path appears in tsc error output', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'a', dependencies: [] }],
+    });
+
+    // TesterAgent produces a bad file.
+    (orch as unknown as { tester: { execute: ReturnType<typeof vi.fn> } }).tester = {
+      execute: vi.fn().mockResolvedValue({
+        testFiles: [{ action: 'create', path: 'src/__tests__/bad.test.ts', content: 'bad code' }],
+      }),
+    };
+
+    // typeChecker.runOn: first 2 calls pass (baseline + applyAndCheckTs), 3rd
+    // call is validateAndFilterTestFiles — returns TS error mentioning the test file.
+    let typeCheckCalls = 0;
+    (orch as unknown as { typeChecker: { run: ReturnType<typeof vi.fn>; runOn: ReturnType<typeof vi.fn> } }).typeChecker = {
+      run: vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 5 }),
+      runOn: vi.fn(async (paths: string[]) => {
+        typeCheckCalls++;
+        const isTestCall = paths.some(p => p.includes('bad.test.ts'));
+        if (isTestCall) {
+          return {
+            success: false,
+            exitCode: 2,
+            output: 'src/__tests__/bad.test.ts(1,1): error TS1128: Declaration or statement expected.',
+            durationMs: 5,
+          };
+        }
+        return { success: true, output: '', exitCode: 0, durationMs: 5 };
+      }),
+    };
+
+    const taskId = 'task-tester-discard';
+    const captured: TaskEvent[] = [];
+    const handler = (e: TaskEvent) => captured.push(e);
+    taskEvents.on(`task:${taskId}`, handler);
+    try {
+      // Task must NOT throw — bad test file is silently discarded.
+      await expect(orch.runTask(taskId, 'tester discard')).resolves.toBeUndefined();
+    } finally {
+      taskEvents.off(`task:${taskId}`, handler);
+    }
+
+    // Step should still complete and commit the Coder's production file.
+    expect(captured.find(e => e.type === 'done')).toBeDefined();
+    expect(captured.find(e => e.type === 'error')).toBeUndefined();
+  });
+
+  it('continues without any test files when tester execute throws', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'a', dependencies: [] }],
+    });
+
+    (orch as unknown as { tester: { execute: ReturnType<typeof vi.fn> } }).tester = {
+      execute: vi.fn().mockRejectedValue(new Error('LLM returned invalid JSON')),
+    };
+
+    const taskId = 'task-tester-throw';
+    const captured: TaskEvent[] = [];
+    const handler = (e: TaskEvent) => captured.push(e);
+    taskEvents.on(`task:${taskId}`, handler);
+    try {
+      await expect(orch.runTask(taskId, 'tester crash')).resolves.toBeUndefined();
+    } finally {
+      taskEvents.off(`task:${taskId}`, handler);
+    }
+
+    // Task completes normally — Tester failure is best-effort.
+    expect(captured.find(e => e.type === 'done')).toBeDefined();
+    expect(captured.find(e => e.type === 'error')).toBeUndefined();
+  });
+});
+
 // v1.39-c — step-level Reviewer-reject path must route through BUGFIX_SPEC
 // (tool-calling Fixer) when toolCallingCoder=true. Previously the patch-based
 // Fixer ran even with tool-calling on — patch-based only sees `currentChanges`

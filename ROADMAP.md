@@ -4,12 +4,12 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.39 done (2026-05-14) — cumulative merge-wait, noop detection, validation abort guard, BUGFIX `_clear()` antipattern, Reviewer-reject → BUGFIX_SPEC dispatch. Bench: sandbox 4/6 (tester bugs), `reviewer_reject` cohort 2/2 на r2 (H4 + T6 оба ✅). Реальные репо H4+T6: было `reviewer_reject ×3` в v1.38 → commit в v1.39.
+**Статус:** 🟢 v1.40-a done (2026-05-14) — TesterAgent post-generation TS validation: плохие тест-файлы дропаются до pipeline. v1.39 принёс cumulative mode, validation abort guard, Reviewer-reject → BUGFIX_SPEC dispatch.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.
 **Backend:** llama-swap (local endpoint, see `.env`), tool-calling Coder/Fixer дефолт.
-**Тесты:** 547/547 unit-tests, 12/12 пакетов чисто.
+**Тесты:** 550/550 unit-tests, 12/12 пакетов чисто.
 **Последнее обновление:** 2026-05-14.
 
 ---
@@ -154,7 +154,16 @@
 - [x] Tests: +2 in orchestrator (BUGFIX_SPEC dispatch on tool-calling, patch fallback on legacy); **547/547** ✅
 - [ ] Bench L1/L4 sandbox (regression guard 3+3) + real-repo T6/H4 (close `reviewer_reject` cohort)
 
-### Phase 5 — Production storage (📋 после Phase 4)
+#### v1.40-a — TesterAgent post-generation TS validation (✅ 2026-05-14)
+
+- [x] **Root cause:** TesterAgent-generated test files were never TypeScript-checked before entering the pipeline — `isTestPath` filter excluded them from the pre-Reviewer TS check (v1.35). Bugs like `body is not defined` (L1.1 r2) and bad assertions (L4.1 r1) reached the validation stage and blocked commits on correct production changes.
+- [x] `Orchestrator.validateAndFilterTestFiles()`: apply test files to disk → `typeChecker.runOn(testPaths)` → parse error output by path → discard files whose path appears in errors, restore disk state for those. Files that pass remain on disk for the rest of the pipeline. Tester stays best-effort: partial success (some valid, some discarded) is allowed.
+- [x] `TesterAgent` prompt rules 11–12: explicit rule against undeclared variables (`body is not defined`) and against fragile list-length assertions without controlled state.
+- [x] +3 unit tests (valid files kept, bad files discarded, tester crash handled). **550/550** ✅
+
+### Phase 5 — Production storage (📋 après Phase 4)
+
+
 
 #### v1.40 — Qdrant migration
 - [ ] Заменить HNSW JSON на Qdrant (vector DB), payload-фильтрация (например, «только из packages/api/»)

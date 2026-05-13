@@ -60,6 +60,17 @@ Rules:
     methods do not exist. To clear users between tests, call the service's own public
     methods: const users = UserService.list(); for (const u of users) UserService.delete(u.id);
     Or use beforeEach to create fresh state via the public API only.
+11. DECLARE every variable before use. When asserting on an HTTP response body:
+    CORRECT — const body = response.json(); expect(body).toHaveLength(2);
+    CORRECT — const body = JSON.parse(response.body); expect(body.name).toBe('Alice');
+    WRONG   — expect(body).toHaveLength(2); // body was never declared → ReferenceError
+    Always assign the response to a variable (const response = await app.inject(...))
+    and then extract the body in a separate const before asserting.
+12. When your beforeEach creates test data and a later test asserts on the full list,
+    account for state from earlier tests. Prefer: create data INSIDE each it() block
+    that needs it, or use afterEach to clean up via public API, so list-length
+    assertions are not fragile. NEVER assert exact list length without controlling the
+    full list state.
 
 Output ONLY valid JSON:
 { "testFiles": [{ "path": "src/__tests__/foo.test.ts", "content": "...", "action": "create" }] }`;
