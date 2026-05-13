@@ -125,10 +125,21 @@ export class Orchestrator {
       repoMap,
     });
 
-    // 3. Plan
-    const plan = await withTaskContext({ taskId }, () =>
-      this.planner.execute(description, plannerContext, mode),
-    );
+    // 3. Plan — with 1 retry on parse failure (same rationale as Architect retry).
+    const isParseError = (e: unknown) =>
+      e instanceof Error && e.message.startsWith('LLM output parsing failed');
+    let plan: Awaited<ReturnType<typeof this.planner.execute>>;
+    try {
+      plan = await withTaskContext({ taskId }, () =>
+        this.planner.execute(description, plannerContext, mode),
+      );
+    } catch (planErr: unknown) {
+      if (!isParseError(planErr)) throw planErr;
+      log.warn({ error: planErr instanceof Error ? planErr.message : String(planErr) }, 'Planner parse failed — retrying');
+      plan = await withTaskContext({ taskId }, () =>
+        this.planner.execute(description, plannerContext, mode),
+      );
+    }
     // Truncate if Planner over-produced. We keep the head and strip dangling deps
     // so the scheduler can still execute the remaining steps cleanly.
     const cap = config.agents.plannerMaxSteps;
