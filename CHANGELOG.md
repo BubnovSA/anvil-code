@@ -13,6 +13,14 @@
 
 ---
 
+## v1.41 — Parse-fail retry + NoopStep retry (2026-05-14)
+
+**v1.41-a — Planner + Architect parse-fail retry:** Both `PlannerAgent.execute()` and `ArchitectAgent.execute()` now retry once on `LLM output parsing failed` — Gemma occasionally truncates JSON or prepends a preamble, killing the whole step/task. Retry fires only for parse errors (other exceptions propagate). Architect falls back to empty design if both attempts fail. Effect: L4.1 0/3 → 2/3.
+
+**v1.41-b — NoopStep retry with CodeGraph hint:** When Coder returns 0 file changes, the orchestrator retries once with a targeted nudge. If the CodeGraph contains a symbol matching the step description, the nudge says "Symbol X already exists in Y:N — modify it, don't skip". Otherwise generic "re-read and edit" nudge. Only throws `NoopStepError` if retry is also empty. Effect: H5 hono getHeader `no_op` → `reviewer_reject` (Coder now produces files; Reviewer is new bottleneck). T6 trpc dataLoader: ✅ stable commit. **555/555 unit tests.** Bench: [2026-05-14-v1.41-parse-retry-noop-retry.md](docs/benchmarks/runs/2026-05-14-v1.41-parse-retry-noop-retry.md).
+
+---
+
 ## v1.40 — TesterAgent validation (2026-05-14)
 
 **v1.40-a:** `Orchestrator.validateAndFilterTestFiles()` — after `tester.execute()`, applies generated test files to disk and runs `typeChecker.runOn(testPaths)`. Files whose path appears in tsc error output are discarded and disk state restored. Closes `body is not defined` class of failures (L1.1 r2 in v1.39 bench): L1.1 goes 2/3 → **3/3**.
