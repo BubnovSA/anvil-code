@@ -564,13 +564,45 @@ export class Orchestrator {
     // design — running ArchitectAgent adds latency without value when the
     // task is "rename X to Y" / "extract function W". Feature and bugfix
     // kinds keep the Architect pre-pass.
-    const design = stepKind === 'refactor'
-      ? { design: '' }
-      : await this.architect.execute(
-          step.description,
-          buildPromptContext({ conventions, ragSnippets, ragFilePaths: [], projectRoot: this.writer.root, newlySources, repoMap }),
-          mode,
+    //
+    // v1.41-a: 1 retry on parse failure. Gemma occasionally returns a preamble
+    // before the JSON object ("Sure! Here's my design: {...}") which the
+    // tolerant JSON parser can't recover — this surface as `llm_parse_fail`
+    // and kills the whole step. A single retry is cheap (~3s) and the model
+    // almost always returns clean JSON on the second call.
+    let design: { design: string };
+    if (stepKind === 'refactor') {
+      design = { design: '' };
+    } else {
+      const architectContext = buildPromptContext({ conventions, ragSnippets, ragFilePaths: [], projectRoot: this.writer.root, newlySources, repoMap });
+      const isParseError = (e: unknown) =>
+        e instanceof Error && e.message.startsWith('LLM output parsing failed');
+      try {
+        design = await this.architect.execute(step.description, architectContext, mode);
+      } catch (firstErr: unknown) {
+        if (!isParseError(firstErr)) throw firstErr; // non-parse errors propagate normally
+        log.warn(
+          { stepId: step.id, error: firstErr instanceof Error ? firstErr.message : String(firstErr) },
+          'Architect parse failed — retrying once with JSON-only nudge',
         );
+        try {
+          design = await this.architect.execute(
+            `${step.description}\n\nIMPORTANT: Return ONLY the JSON object, no preamble or markdown.`,
+            architectContext,
+            mode,
+          );
+        } catch (secondErr: unknown) {
+          // Both parse attempts failed: fall back to empty design — the Coder
+          // has RAG context + repo-map to proceed without Architect guidance.
+          if (!isParseError(secondErr)) throw secondErr;
+          log.warn(
+            { stepId: step.id, error: secondErr instanceof Error ? secondErr.message : String(secondErr) },
+            'Architect parse failed on retry — continuing with empty design',
+          );
+          design = { design: '' };
+        }
+      }
+    }
 
     const promptContext = buildPromptContext({
       conventions,
@@ -625,17 +657,42 @@ export class Orchestrator {
 
     let currentChanges: FileChange[] = [...codeChanges.files];
 
-    // v1.35 C1/C2 — fail fast when Coder produced nothing. Previously the step
-    // quietly completed with 0 changes (Reviewer approved an empty file list),
-    // leaving the task looking "completed" with no actual edits — L2.4 / L2.6.
+    // v1.35 C1/C2 — fail fast when Coder produced nothing.
+    // v1.41-b: before throwing, try one retry with a targeted nudge. If the
+    // CodeGraph already contains a symbol matching the step description, the
+    // Coder likely decided the task was "already done" (H5-style no_op) —
+    // surface that symbol's location so the model knows to MODIFY, not skip.
+    // For other 0-change cases (transient model issue) a generic re-read nudge
+    // recovers most of the time. Only throw NoopStepError if retry is also empty.
     if (currentChanges.length === 0) {
       taskEvents.emitEvent({
         taskId,
         type: 'step_noop',
-        message: `Step ${step.id} produced no file changes`,
+        message: `Step ${step.id} produced no file changes (attempting retry)`,
         data: { stepId: step.id },
       });
-      throw new NoopStepError(step.id, `Step ${step.id}: Coder produced no file changes`);
+
+      const symbolHint = this.findSymbolHintForStep(step.description);
+      const noopNudge = symbolHint
+        ? `CRITICAL: ${symbolHint} You MUST modify the existing implementation — do NOT call done() without making at least one file edit.`
+        : `CRITICAL: You returned 0 file changes. Re-read the relevant file with read_file, locate the exact lines to change, and make the edit. Do NOT call done() without at least one successful tool call.`;
+
+      const retryContext = `${promptContext}\n\n${noopNudge}`;
+      const retryResult = config.agents.toolCallingCoder
+        ? await runTaskAgent(
+            pickSpec(stepKind),
+            { stepDescription: step.description, context: retryContext, taskMode: mode, ragReadOnlyPaths: ragFilePaths },
+            this.router,
+            this.writer.root,
+          )
+        : await this.coder.execute(step.description, retryContext, mode, onCoderFile);
+
+      currentChanges = [...retryResult.files];
+
+      if (currentChanges.length === 0) {
+        throw new NoopStepError(step.id, `Step ${step.id}: Coder produced no file changes (after noop retry)`);
+      }
+      log.info({ stepId: step.id, files: currentChanges.length }, 'Noop retry produced file changes');
     }
 
     // v1.32-c: skip Tester for refactor kinds. Refactor preserves behavior
@@ -908,6 +965,28 @@ export class Orchestrator {
         }
       }
     }
+  }
+
+  /**
+   * v1.41-b — Search the live CodeGraph for a symbol whose name appears in the
+   * step description. Used to build a targeted nudge when Coder returns 0 files
+   * (no_op pattern: model decided the feature already exists). Returns a short
+   * sentence for the retry prompt, or null if no relevant symbol is found.
+   */
+  private findSymbolHintForStep(stepDescription: string): string | null {
+    const words = stepDescription
+      .split(/[\s,.()\[\]{}<>:;'"\/\\]+/)
+      .filter(w => w.length > 3)
+      .map(w => w.toLowerCase());
+
+    const allSymbols = this.retriever.graph.getAll();
+    for (const sym of allSymbols) {
+      const symLower = sym.name.toLowerCase();
+      if (words.some(w => symLower.includes(w) || w.includes(symLower))) {
+        return `Symbol '${sym.name}' already exists in ${sym.filePath}:${sym.startLine}.`;
+      }
+    }
+    return null;
   }
 
   /**

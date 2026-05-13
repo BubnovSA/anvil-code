@@ -666,6 +666,102 @@ describe('Orchestrator validation incompleteness guard (v1.39-b)', () => {
   });
 });
 
+// v1.41-a — Architect parse-fail retry. When ArchitectAgent.execute() throws
+// (Gemma outputs a preamble before JSON), the orchestrator retries once with a
+// JSON-only nudge. If both fail, the step continues with an empty design rather
+// than crashing — the Coder has RAG context to proceed.
+describe('Architect parse-fail retry (v1.41-a)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('retries once when Architect throws and succeeds on second attempt', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'step a', dependencies: [] }],
+    });
+
+    let architectCalls = 0;
+    (orch as unknown as { architect: { execute: ReturnType<typeof vi.fn> } }).architect = {
+      execute: vi.fn(async () => {
+        architectCalls++;
+        if (architectCalls === 1) throw new Error('LLM output parsing failed: unknown');
+        return { design: 'retry design' };
+      }),
+    };
+
+    const taskId = 'task-arch-retry';
+    await expect(orch.runTask(taskId, 'arch retry')).resolves.toBeUndefined();
+    expect(architectCalls).toBe(2);
+  });
+
+  it('continues with empty design when both Architect attempts fail', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'step a', dependencies: [] }],
+    });
+
+    (orch as unknown as { architect: { execute: ReturnType<typeof vi.fn> } }).architect = {
+      execute: vi.fn().mockRejectedValue(new Error('LLM output parsing failed: unknown')),
+    };
+
+    const taskId = 'task-arch-both-fail';
+    // Must NOT throw — falls back to empty design, Coder proceeds with RAG context.
+    await expect(orch.runTask(taskId, 'arch both fail')).resolves.toBeUndefined();
+  });
+});
+
+// v1.41-b — NoopStep retry. When Coder returns 0 file changes, the orchestrator
+// retries once with a targeted nudge (+ CodeGraph hint if a matching symbol is
+// found). Only throws NoopStepError if the retry also returns 0 changes.
+describe('NoopStep retry (v1.41-b)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('retries Coder and succeeds when retry produces file changes', async () => {
+    const { orch, git } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'add health endpoint', dependencies: [] }],
+    });
+
+    // First Coder call → 0 changes; retry → 1 change.
+    let coderCalls = 0;
+    (orch as unknown as { coder: { execute: ReturnType<typeof vi.fn> } }).coder = {
+      execute: vi.fn(async () => {
+        coderCalls++;
+        if (coderCalls === 1) return { files: [] };
+        return { files: [{ action: 'create', path: 'src/health.ts', content: 'x' }] };
+      }),
+    };
+
+    const taskId = 'task-noop-retry-ok';
+    const captured: TaskEvent[] = [];
+    taskEvents.on(`task:${taskId}`, e => captured.push(e));
+    try {
+      await orch.runTask(taskId, 'noop retry ok');
+    } finally {
+      taskEvents.off(`task:${taskId}`, captured.push.bind(captured));
+    }
+
+    // step_noop fires on first empty result, but task ultimately succeeds.
+    expect(captured.find(e => e.type === 'step_noop')).toBeDefined();
+    expect(captured.find(e => e.type === 'commit')).toBeDefined();
+    expect(git.commitChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws NoopStepError when retry also returns 0 changes', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'add something', dependencies: [] }],
+    });
+
+    (orch as unknown as { coder: { execute: ReturnType<typeof vi.fn> } }).coder = {
+      execute: vi.fn().mockResolvedValue({ files: [] }),
+    };
+
+    const taskId = 'task-noop-retry-fail';
+    // All steps failed → runTask throws "All N steps failed"
+    await expect(orch.runTask(taskId, 'noop both empty')).rejects.toThrow('steps failed');
+  });
+});
+
 // v1.40-a — TesterAgent-generated test files are validated with tsc before being
 // added to the pipeline. Files with TS errors (e.g. undeclared variables like
 // `body is not defined`, wrong Fastify types) are discarded silently so they
@@ -926,7 +1022,9 @@ describe('Orchestrator noop step detection (v1.39-a)', () => {
     (orch as unknown as { coder: { execute: ReturnType<typeof vi.fn> } }).coder = {
       execute: vi.fn(async () => {
         coderCalls++;
-        if (coderCalls === 2) return { files: [] };
+        // calls 2 and 3 are the original + retry for step b — both return empty
+        // so NoopStepError is thrown and noopStepIds gets populated.
+        if (coderCalls === 2 || coderCalls === 3) return { files: [] };
         return { files: [{ action: 'create', path: `step-${coderCalls}.ts`, content: 'x' }] };
       }),
     };
