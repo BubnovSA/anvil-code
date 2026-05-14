@@ -72,6 +72,7 @@ export class CodeGraph {
     seeds: string[],
     maxHops: number,
     seen: Set<string>,
+    callersPerSymbol = 10, // cap per expansion node to limit noise in dense graphs
   ): CodeSymbol[] {
     const result: CodeSymbol[] = [];
     // Seeds are the expansion roots — we want their callers, not the seeds
@@ -82,7 +83,7 @@ export class CodeGraph {
     for (let hop = 0; hop < maxHops && frontier.length > 0; hop++) {
       const nextFrontier: string[] = [];
       for (const name of frontier) {
-        const callers = this.getCallers(name);
+        const callers = this.getCallers(name).slice(0, callersPerSymbol);
         for (const caller of callers) {
           if (seen.has(caller.name)) continue;
           seen.add(caller.name);

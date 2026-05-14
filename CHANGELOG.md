@@ -13,6 +13,12 @@
 
 ---
 
+## v1.46 bench + tuning (2026-05-15)
+
+Full 12-task bench revealed regression at `RAG_GRAPH_HOPS=3`: 11/12 → 9/12 (hono stable 6/6, trpc 5/6→2/6). Root cause: 3-hop BFS in trpc (3938 symbols) floods token budget with unrelated cross-package callers before relevant context. Default reverted to `RAG_GRAPH_HOPS=1` (= v1.43 1-hop direct callers, validated at 11/12). `RAG_CALLERS_PER_SYMBOL=3` cap added. Infrastructure remains for explicit cross-service refactoring tasks (set `RAG_GRAPH_HOPS=2-3` manually). L2.3 soft-delete ✅ at hops=1 (types+service+routes, 206s). Bench: [2026-05-15-v1.46-full-12task.md](docs/benchmarks/runs/2026-05-15-v1.46-full-12task.md).
+
+---
+
 ## v1.46 — N-hop transitive caller BFS (2026-05-15)
 
 `CodeGraph.getTransitiveCallers(seeds, maxHops, seen)`: BFS over the reverse index (built in v1.43), expanding frontier level by level up to `maxHops`. Each hop is O(callsites) — the reverse index is pre-computed. `GraphRetriever.retrieveContextItems`: replaces 1-hop `getCallers` loop (v1.43) with `getTransitiveCallers(primarySymbolNames, config.rag.graphHops, seen)`. Default `RAG_GRAPH_HOPS=3`. **Bench:** L2.3 soft-delete (3-file cross-service: types.ts + user-service.ts + routes.ts) ✅ commit in 206s — transitive callers surfaced all 3 files including UserService.list() callers. +4 unit tests. **569/569, 12/12 packages.**

@@ -310,7 +310,8 @@ export class GraphRetriever {
       const transitive = this.codeGraph.getTransitiveCallers(
         primarySymbolNames,
         config.rag.graphHops,
-        seen, // modified in-place by getTransitiveCallers
+        seen,
+        config.rag.graphCallersPerSymbol,
       );
 
       for (const caller of transitive) {
