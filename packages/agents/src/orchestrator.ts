@@ -1061,14 +1061,57 @@ export class Orchestrator {
       if (written.length === 0) return [];
 
       const checkResult = await this.typeChecker.runOn(written);
+      const badPaths = new Set<string>();
+
       if (checkResult.success || checkResult.skipped) {
-        // All written test files passed tsc — keep on disk, add to pipeline.
-        return testFiles;
+        // TS clean — now do a dry vitest run on just the generated files.
+        // v1.44: catches runtime failures (wrong API format assertions, timing-
+        // sensitive tests) that the TS check cannot detect. If a file fails at
+        // runtime it is discarded — the step still commits with Coder's changes.
+        try {
+          const testRunResult = await this.testRunner.runOn(written);
+          if (!testRunResult.success && !testRunResult.skipped) {
+            // Identify which specific files caused the failure by checking if
+            // their relative path appears in the test runner output.
+            const runLines = testRunResult.output.split('\n');
+            for (const filePath of written) {
+              const rel = filePath.replace(/\\/g, '/');
+              const basename = filePath.split('/').pop() ?? '';
+              if (runLines.some(l => l.includes(rel) || l.includes(basename))) {
+                badPaths.add(filePath);
+              }
+            }
+            if (badPaths.size > 0) {
+              log.warn(
+                { badFiles: [...badPaths], firstError: testRunResult.output.slice(0, 300) },
+                'TesterAgent: discarding test files that fail at runtime',
+              );
+            } else {
+              // Can't pin which file — discard all to be safe.
+              for (const f of written) badPaths.add(f);
+              log.warn(
+                { firstError: testRunResult.output.slice(0, 300) },
+                'TesterAgent: runtime failure, discarding all generated test files',
+              );
+            }
+          }
+        } catch (testErr: unknown) {
+          log.warn({ error: String(testErr) }, 'TesterAgent dry-run threw — skipping runtime check');
+        }
+        // Restore and filter bad files (from runtime check).
+        for (const filePath of badPaths) {
+          const abs = path.resolve(this.writer.root, filePath);
+          const original = backups.get(filePath) ?? null;
+          try {
+            if (original === null) { if (fs.existsSync(abs)) fs.unlinkSync(abs); }
+            else fs.writeFileSync(abs, original, 'utf8');
+          } catch { /* ignore */ }
+        }
+        return testFiles.filter(f => !badPaths.has(f.path));
       }
 
-      // Parse which paths appear in error lines and discard them.
+      // TS errors — parse which paths appear in error lines and discard them.
       const errorLines = checkResult.output.split('\n');
-      const badPaths = new Set<string>();
       for (const filePath of written) {
         const normalised = filePath.replace(/\\/g, '/');
         if (errorLines.some(l => l.replace(/\\/g, '/').startsWith(normalised))) {

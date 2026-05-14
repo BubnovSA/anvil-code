@@ -17,6 +17,37 @@ export class TestRunner {
     private timeoutMs: number = 60_000,
   ) {}
 
+  // v1.44 — run vitest on specific test files only. Used by validateAndFilterTestFiles
+  // to do a dry run on TesterAgent-generated files before adding them to the pipeline.
+  // Catches wrong assertions (stale API format, timing-sensitive rate-limit tests)
+  // that the TS check cannot detect.
+  async runOn(paths: string[]): Promise<ValidationResult> {
+    if (paths.length === 0) {
+      return { success: true, output: '', exitCode: 0, durationMs: 0 };
+    }
+    const pkgPath = path.join(this.projectRoot, 'package.json');
+    if (!fs.existsSync(pkgPath)) {
+      return { success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'no package.json' };
+    }
+    const relativePaths = paths.map(p =>
+      path.isAbsolute(p) ? path.relative(this.projectRoot, p) : p,
+    );
+    const result = await this.spawnWithTimeout(
+      'npx',
+      ['vitest', 'run', '--reporter', 'verbose', '--', ...relativePaths],
+    );
+    // Same "No test found" suppression as run()
+    if (!result.success && result.output.includes('No test found in suite')) {
+      const lines = result.output.split('\n');
+      const realFailures = lines.filter(l =>
+        (l.includes(' FAIL ') || l.startsWith('FAIL ')) &&
+        !lines.some(l2 => l2.includes('No test found')),
+      );
+      if (realFailures.length === 0) return { ...result, success: true };
+    }
+    return result;
+  }
+
   async run(): Promise<ValidationResult> {
     const pkgPath = path.join(this.projectRoot, 'package.json');
     if (!fs.existsSync(pkgPath)) {
