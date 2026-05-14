@@ -210,6 +210,9 @@ export class GraphRetriever {
     const items: ContextItem[] = [];
     let tokenEstimate = 0;
     const maxTokens = config.rag.maxContextTokens;
+    // v1.43: track primary (top-k) symbol names separately from 1-hop deps so
+    // the 2-hop caller expansion only queries for primary symbols, not their deps.
+    const primarySymbolNames: string[] = [];
 
     // Vector + BM25 + reranker retrieval — skipped when index is empty.
     if (this.vectorStore.size > 0) {
@@ -272,6 +275,7 @@ export class GraphRetriever {
             endLine: symbol.endLine,
             text: symbol.text,
           });
+          primarySymbolNames.push(symbol.name); // track for 2-hop
           tokenEstimate += snippetTokens;
 
           const deps = this.codeGraph.getDependencies(result.id);
@@ -287,6 +291,31 @@ export class GraphRetriever {
             });
             tokenEstimate += depTokens;
           }
+        }
+      }
+    }
+
+    // v1.43 — 2-hop: for each primary (top-k) symbol, add callers — symbols that
+    // reference it in their body. Surfaces usage context alongside definition.
+    // Critical for large files (dataLoader.ts 900+ lines): Coder sees HOW the
+    // symbol is used elsewhere, understands where to add new functionality.
+    if (primarySymbolNames.length > 0) {
+      const seen = new Set(items.map(i => i.symbolName));
+      for (const primaryName of primarySymbolNames) {
+        const callers = this.codeGraph.getCallers(primaryName);
+        for (const caller of callers.slice(0, 3)) {
+          if (seen.has(caller.name)) continue;
+          const callerTokens = Math.ceil(caller.text.length / 4);
+          if (tokenEstimate + callerTokens > maxTokens) break;
+          items.push({
+            symbolName: caller.name,
+            filePath: caller.filePath,
+            startLine: caller.startLine,
+            endLine: caller.endLine,
+            text: caller.text,
+          });
+          seen.add(caller.name);
+          tokenEstimate += callerTokens;
         }
       }
     }
