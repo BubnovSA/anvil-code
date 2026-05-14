@@ -13,6 +13,12 @@
 
 ---
 
+## v1.42 full bench — 9/12 (75%) vs 5/12 (42%) (2026-05-14)
+
+Full 12-task bench (same tasks as v1.38 baseline). **+33pp** across both repos: Hono 3/6→**5/6 (83%)**, tRPC 2/6→**4/6 (67%)**. New wins: H2 (llm_parse_fail→✅), H4 (reviewer_reject→✅), H5 (no_op→✅), T2 (ts_fail→✅), T3 (validation_incomplete→✅). Remaining 3 failures: H6 reviewer_reject (correct — wrong import), T5 reviewer_reject (correct — wrong format), T6 noop (900+ line file). Bench: [2026-05-14-v1.42-full-12task.md](docs/benchmarks/runs/2026-05-14-v1.42-full-12task.md).
+
+---
+
 ## v1.42 — Monorepo meta injection in RAG (2026-05-14)
 
 `GraphRetriever.indexMonorepoMeta()`: at the end of `indexCodebase`, parses `tsconfig.json compilerOptions.paths` and `packages/*/package.json exports`. Persists to `graphsDir/monorepo-meta.json`; loaded at API startup. `retrieveContextItems()` appends the meta as a pinned `__monorepo_imports__` ContextItem (within token budget, placed last). Early return relaxed: skips only when BOTH vector index is empty AND no meta available.
