@@ -13,6 +13,12 @@
 
 ---
 
+## v1.45 — FEATURE_SPEC multi-file task guidance (2026-05-15)
+
+Workflow step 5: "if the step names multiple files, read_file and edit EVERY one before done()". SCOPE DISCIPLINE: "scan Allowed write targets before done() — if multiple .ts/.tsx files listed, verify all edited. Type definition file + implementation file often both need changes — skipping the type file is the #1 silent failure mode." **C5 TTL session cumulative bench: ✅ 3 files (types.ts + user-service.ts + routes.ts)** on clean sandbox. Full C1-C5 cumulative run: **5/5 ✅** — first clean sweep. (Previous C5 failures were due to sandbox contamination from prior runs AND ambiguous task description.) 565/565 unit tests.
+
+---
+
 ## v1.44 — TesterAgent runtime dry-run (2026-05-15)
 
 `TestRunner.runOn(paths)`: runs `npx vitest run -- path1 path2` on specific files. `validateAndFilterTestFiles`: after TS check passes, runs `testRunner.runOn(written)` — discards test files that fail at runtime. Catches wrong API format assertions (array vs `{users,total}` after pagination change) and timing-sensitive tests (rate limit counters) that TS check cannot detect. **C6 rate limiting ✅ in both cumulative bench runs** (was ❌ in v1.43 — timing-sensitive server.test.ts discarded, Coder's implementation commits cleanly). Bench: [2026-05-15-v1.44-cumulative-dryrun.md](docs/benchmarks/runs/2026-05-15-v1.44-cumulative-dryrun.md). 565/565 unit tests.
