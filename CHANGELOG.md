@@ -13,6 +13,14 @@
 
 ---
 
+## v1.42 — Monorepo meta injection in RAG (2026-05-14)
+
+`GraphRetriever.indexMonorepoMeta()`: at the end of `indexCodebase`, parses `tsconfig.json compilerOptions.paths` and `packages/*/package.json exports`. Persists to `graphsDir/monorepo-meta.json`; loaded at API startup. `retrieveContextItems()` appends the meta as a pinned `__monorepo_imports__` ContextItem (within token budget, placed last). Early return relaxed: skips only when BOTH vector index is empty AND no meta available.
+
+**Effect on bench (trpc):** T2 (`ts_fail` TS2307 bad import) → `test_fail` ✅ import issue closed. T5 (`ts_fail` TS2305 no exported member) → `test_fail` ✅ import issue closed. LLM now sees `@trpc/server → packages/server/src` and generates correct workspace package aliases instead of broken relative paths. `ts_fail` pattern eliminated from T2+T5 cohort. +5 unit tests (parse paths, parse exports, persist+reload, meta as ContextItem, empty project). **560/560 unit tests, 12/12 packages.**
+
+---
+
 ## v1.41.1 — H5 bench task fix + Reviewer issues diagnostic (2026-05-14)
 
 **Reviewer issues in step_fail:** `lastReviewIssues` captured in Reviewer loop and included in the `Reviewer rejected after N attempts` error message (up to 3 issues, 300 chars). Surfaces in bench stream without needing log access. Revealed H5 root cause immediately.
