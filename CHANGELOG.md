@@ -13,6 +13,12 @@
 
 ---
 
+## v1.46 — N-hop transitive caller BFS (2026-05-15)
+
+`CodeGraph.getTransitiveCallers(seeds, maxHops, seen)`: BFS over the reverse index (built in v1.43), expanding frontier level by level up to `maxHops`. Each hop is O(callsites) — the reverse index is pre-computed. `GraphRetriever.retrieveContextItems`: replaces 1-hop `getCallers` loop (v1.43) with `getTransitiveCallers(primarySymbolNames, config.rag.graphHops, seen)`. Default `RAG_GRAPH_HOPS=3`. **Bench:** L2.3 soft-delete (3-file cross-service: types.ts + user-service.ts + routes.ts) ✅ commit in 206s — transitive callers surfaced all 3 files including UserService.list() callers. +4 unit tests. **569/569, 12/12 packages.**
+
+---
+
 ## v1.45 — FEATURE_SPEC multi-file task guidance (2026-05-15)
 
 Workflow step 5: "if the step names multiple files, read_file and edit EVERY one before done()". SCOPE DISCIPLINE: "scan Allowed write targets before done() — if multiple .ts/.tsx files listed, verify all edited. Type definition file + implementation file often both need changes — skipping the type file is the #1 silent failure mode." **C5 TTL session cumulative bench: ✅ 3 files (types.ts + user-service.ts + routes.ts)** on clean sandbox. Full C1-C5 cumulative run: **5/5 ✅** — first clean sweep. (Previous C5 failures were due to sandbox contamination from prior runs AND ambiguous task description.) 565/565 unit tests.
