@@ -13,6 +13,12 @@
 
 ---
 
+## v1.43 cumulative mode bench (2026-05-15)
+
+6 sequential tasks on sandbox with `CUMULATIVE_MODE=true`. Result: **5/6 commits**, each task forks from `auto/cumulative` (accumulated state). `cumulative_merged` fires after every successful commit; ff-merge happens automatically with no manual work. v1.37 had same 5/6 score but required manual merge between tasks and had a race condition — both now eliminated. C4 (pagination) and C6 (rate limiting) fail on TesterAgent test quality, not cumulative logic. Bench: [2026-05-15-v1.39a-cumulative-mode.md](docs/benchmarks/runs/2026-05-15-v1.39a-cumulative-mode.md).
+
+---
+
 ## v1.43 bench — 11/12 (92%) with precise task descriptions (2026-05-15)
 
 T5 (maxBodySize) re-run with explicit JSON format spec: `HTTP 413 + { error: 'Payload Too Large' } + Content-Type: application/json`. Result: ✅ commit 161s (was `reviewer_reject` — Reviewer correctly blocked ambiguous spec). **Full bench with correct task descriptions: 11/12 (92%)** vs 5/12 (42%) in v1.38. Only T6 remains (dataLoader.ts 900+ lines complex generics — 24GB VRAM wall, not addressable at current model size).
