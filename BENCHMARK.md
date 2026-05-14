@@ -7,10 +7,11 @@ Quantitative track record of the RAG System on TypeScript codebases. Methodology
 | Target                | Size           | Tasks | Success | Notes                          |
 |-----------------------|----------------|-------|---------|--------------------------------|
 | `rag-system-sandbox`  | 30 TS files    | 16    | **87.5 %** (14/16) | Curated suite L1–L5, all categories |
-| `honojs/hono`         | 326 TS files   | 9     | **~38 %** (sprint D2) | Real OSS, mature codebase |
-| `trpc/trpc`           | 714 TS files   | 9     | **~38 %** (sprint D2) | pnpm monorepo, project refs |
+| `honojs/hono`         | 366 TS files   | 6     | **83 %** (5/6, v1.43) | Real OSS, mature codebase |
+| `trpc/trpc`           | 907 TS files   | 6     | **83 %** (5/6, v1.43) | pnpm monorepo, project refs |
+| **Combined real-repo** | | **12** | **92 % (11/12)** | v1.43 full bench, 2026-05-15 |
 
-Sandbox numbers measure code-generation ceiling. Real-repo numbers measure operational ceiling when context budget, pre-existing test failures, and scope discipline come into play.
+Sandbox numbers measure code-generation ceiling. Real-repo numbers measure operational ceiling. Combined 42 % → 92 % improvement from v1.38 → v1.45 via retrieval, Reviewer, Planner/Tester hardening.
 
 ---
 

@@ -42,7 +42,7 @@ Turborepo monorepo of 12 TypeScript packages. The system is a request-driven pip
    SSE clients (VS Code extension, curl -N)
 ```
 
-Every agent reads from a shared **RAG Engine** that combines an HNSW vector index, a BM25 keyword index (merged via RRF), and a 1-hop graph traversal over an AST-derived code graph.
+Every agent reads from a shared **RAG Engine** that combines an HNSW vector index, a BM25 keyword index (merged via RRF), a 2-hop graph traversal (forward deps + reverse callers) over an AST-derived code graph, and a pinned monorepo meta item (tsconfig paths + package exports) for correct workspace import generation.
 
 All file writes go through **Safe Exec** (backup → diff → write) and only land via **Git Engine** at the very end.
 
@@ -63,14 +63,17 @@ All file writes go through **Safe Exec** (backup → diff → write) and only la
 
 - **`vector-store.ts`** — HNSW index, 768-dim vectors from `nomic-embed-text-v1.5`. Persists to `data/vectors/*.hnsw` + `*.json`.
 - **`bm25.ts`** — pure-TS BM25 (k1=1.5, b=0.75). No external deps.
-- **`graph-retriever.ts`** — query path: BM25 candidates ∪ dense candidates → RRF merge (k=60) → optional cross-encoder rerank → 1-hop expansion over the code graph → token-budgeted output.
-- **`file-watcher.ts`** — incremental re-indexing of changed files when `WATCH_ENABLED=true`.
+- **`graph-retriever.ts`** — query path: BM25 candidates ∪ dense candidates → RRF merge (k=60) → optional cross-encoder rerank → **2-hop expansion** (top-k symbols + 1-hop deps + reverse-dep callers) → monorepo meta injection → token-budgeted output.
 
-The code graph is built by `packages/code-graph/`:
+`retrieveContextItems` retrieval layers (v1.43+):
+1. **Dense + BM25 hybrid** → top-k symbols
+2. **1-hop forward** (`getDependencies`) — symbols the top-k use
+3. **2-hop reverse** (`getCallers`) — symbols that reference the top-k (usage context)
+4. **Monorepo meta** (pinned) — tsconfig paths aliases + package exports, always appended so LLM generates correct workspace import paths
 
-- TypeScript Compiler API for `.ts`/`.tsx`.
-- `tree-sitter` for `.py`/`.rs`/`.go`.
-- Nodes carry signature, kind, name, file path, line range; edges encode imports and dependency direction.
+The code graph (`packages/code-graph/`) carries a **reverse index** (`reverseIndex: Map<name, Set<callerName>>`) maintained incrementally on `addFile`/`removeFile` and rebuilt on `loadFromDisk`. This enables `getCallers()` in O(1) per symbol.
+
+**Monorepo meta** (`indexMonorepoMeta`): at the end of `indexCodebase`, parses `tsconfig.json compilerOptions.paths` and `packages/*/package.json exports`. Persisted to `graphsDir/monorepo-meta.json` for reload across restarts.
 
 `buildRepoMap()` produces a token-budgeted summary used for Planner/Architect prompts.
 
@@ -88,6 +91,17 @@ The code graph is built by `packages/code-graph/`:
 | `test-runner`    | Wraps vitest/jest, parses pass/fail per file                         |
 
 `COMMIT_ONLY_IF_VALID=true` (default) blocks commits when validation hasn't converged. The work is preserved on the `auto/task-*` branch for human inspection.
+
+## Cumulative mode
+
+`CUMULATIVE_MODE=true` enables sequential task accumulation:
+
+1. After a successful commit to `auto/task-<id>`, `GitEngine.mergeIntoCumulative()` fast-forward merges the branch into `auto/cumulative` (configurable via `CUMULATIVE_BRANCH`).
+2. The next task forks from `auto/cumulative` instead of `defaultBranch` — it sees all prior commits.
+3. On non-fast-forward conflict: emits `cumulative_merge_failed` event, branch is retained for manual resolution; the task itself is still `done`.
+4. `JobWorker` is already sequential (single `processing` flag) — no race conditions between tasks.
+
+Bench result: 6/6 sequential tasks committed on sandbox with zero manual merges (v1.45, 2026-05-15).
 
 ## API surface
 

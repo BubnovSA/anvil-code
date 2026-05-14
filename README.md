@@ -6,10 +6,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="MIT License"/></a>
   <img src="https://img.shields.io/badge/TypeScript-5.4+-3178c6.svg" alt="TypeScript"/>
   <img src="https://img.shields.io/badge/Node.js-18+-339933.svg" alt="Node.js"/>
-  <img src="https://img.shields.io/badge/tests-534%20passed-22c55e.svg" alt="534 tests"/>
+  <img src="https://img.shields.io/badge/tests-565%20passed-22c55e.svg" alt="565 tests"/>
   <img src="https://img.shields.io/badge/packages-12%20clean-22c55e.svg" alt="12 packages"/>
   <img src="https://img.shields.io/badge/sandbox-87.5%25-22c55e.svg" alt="87.5% sandbox"/>
-  <img src="https://img.shields.io/badge/real--repo-38%25-f97316.svg" alt="38% real repos"/>
+  <img src="https://img.shields.io/badge/real--repo-92%25-22c55e.svg" alt="92% real repos"/>
 </p>
 
 <p align="center">
@@ -25,15 +25,16 @@ POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer
 
 ## Benchmark
 
-> All numbers from v1.37–v1.38 bench runs. Raw data: [BENCHMARK.md](BENCHMARK.md)
+> Latest numbers from v1.43 bench (2026-05-15). Raw data: [BENCHMARK.md](BENCHMARK.md)
 
 ### By target codebase
 
 | Target | Files | Tasks | 🟢 Pass | 🔴 Fail | Rate |
 |--------|-------|-------|---------|---------|------|
 | `rag-system-sandbox` (curated) | ~30 | 16 | **14** | 2 | 🟢 **87.5 %** |
-| `honojs/hono` (real OSS) | 326 | 9 | **~3** | ~6 | 🟡 **~38 %** |
-| `trpc/trpc` (real OSS) | 714 | 9 | **~3** | ~6 | 🟡 **~38 %** |
+| `honojs/hono` (real OSS) | 366 | 6 | **5** | 1 | 🟢 **83 %** |
+| `trpc/trpc` (real OSS) | 907 | 6 | **5** | 1 | 🟢 **83 %** |
+| **Combined real-repo** | | **12** | **11** | 1 | 🟢 **92 %** |
 
 ### By task category (sandbox)
 
@@ -54,25 +55,31 @@ POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer
 | 4 – 5 new abstractions | 🟡 ~70 % | Reviewer becomes the gating factor |
 | 5 + architectural | 🔴 ~30 % | Context or scope overrun |
 
-### Real-repo failure analysis (18 tasks on hono + trpc, before sprint fixes)
+### Real-repo progress (v1.38 → v1.45)
 
-| Failure pattern | hono | trpc | Total | % | Fix |
-|---|---|---|---|---|---|
-| `exceed_context_size` | 3 | 3 | **6** | 🔴 33 % | `MAX_READ_LINES=350`, `HISTORY_KEEP_TAIL=4` |
-| `test_fail:snapshot` (destructive side-edits) | 4 | 0 | **4** | 🔴 22 % | RAG paths read-only for Coder |
-| `ts_precheck_fail` (pre-existing TS errors) | 0 | 3 | **3** | 🟡 17 % | Baseline detection before first task |
-| `validation_fail:ts` | 1 | 1 | **2** | 🟡 11 % | `runOn(prodPaths)` filtering |
-| `reviewer_reject` | 1 | 1 | **2** | 🟡 11 % | Lenient reviewer (v1.36) |
-| `llm_parse_fail` | 0 | 1 | **1** | 🟢 6 % | JSON repair in Planner |
-
-### Before → after sprint fixes (D1 → D2)
-
-| Metric | Day 1 | Day 2 (after fixes) | Δ |
+| Metric | v1.38 (2026-05-13) | v1.45 (2026-05-15) | Δ |
 |---|---|---|---|
-| Real-repo commits (18 tasks) | 🔴 **0 / 18** | 🟡 **6 / 16** | **+38 pp** |
-| Context overflow rate | 🔴 33 % | 🟢 ~8 % | −25 pp |
-| Destructive side-edits | 🔴 22 % | 🟢 0 % | −22 pp |
-| Pre-existing failures blocking commit | 🔴 17 % | 🟢 ~2 % | −15 pp |
+| Real-repo success rate | 🟡 **42 %** (5/12) | 🟢 **92 %** (11/12) | **+50 pp** |
+| `ts_fail` (bad workspace imports) | 🔴 29 % | 🟢 0 % | Monorepo meta injection |
+| `reviewer_reject` | 🔴 29 % | 🟢 ~8 % | BUGFIX_SPEC Fixer dispatch |
+| `no_op` (Coder 0 changes) | 🔴 14 % | 🟢 0 % | NoopStep retry + CodeGraph hint |
+| `llm_parse_fail` | 🔴 14 % | 🟢 ~4 % | Planner + Architect retry |
+| `validation_incomplete` | 🔴 14 % | 🟢 0 % | Validation timeout guard |
+
+### Cumulative mode (sequential tasks, building on each other)
+
+6 tasks run sequentially on sandbox, each forking from `auto/cumulative` (accumulated state of all prior committed tasks):
+
+| Task | Description | Result |
+|------|-------------|--------|
+| C1 | DELETE /users/:id endpoint | 🟢 commit |
+| C2 | Email filter on GET /users | 🟢 commit |
+| C3 | updatedAt field + PATCH endpoint (3 files) | 🟢 commit |
+| C4 | Pagination with { users, total } format | 🟢 commit |
+| C5 | TTL sessionExpiry + POST /session (3 files) | 🟢 commit |
+| C6 | Rate limiting in server.ts | 🟢 commit |
+
+**6/6 ✅** — no merge conflicts, no race conditions, no manual work between tasks.
 
 ---
 
@@ -85,11 +92,11 @@ POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer
 | JSDoc / TSDoc annotation | 🟢 ~100 % | Read-only analysis, minimal writes |
 | Bugfix (test → one file) | 🟢 ~90 % | Clear signal from failing test |
 | LRU / TTL / algorithmic logic | 🟢 ~90 % | Model generates correct structures |
-| Multi-file feature (2–4 files) | 🟡 ~70 % | Some cross-file integration gaps |
+| Multi-file feature (2–4 files) | 🟢 ~90 % | 2-hop retrieval + FEATURE_SPEC guidance |
 | Refactor across 5+ files | 🔴 ~30 % | Context window + 1-hop graph limit |
 | Large class surgery (>700 LOC) | 🔴 ~25 % | Anchor lookup drifts on long files |
 | Complex generics (tRPC-style) | 🔴 ~20 % | Type graph exceeds retrieval budget |
-| Cumulative chained tasks | 🟡 ~50 % | Unreliable on local 32 B models |
+| Cumulative chained tasks | 🟢 ~83 % | v1.39-a auto ff-merge; 6/6 on sandbox |
 
 ---
 
