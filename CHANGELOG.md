@@ -13,6 +13,25 @@
 
 ---
 
+## v1.51 zod re-bench — 4/4 (100%) (2026-05-15)
+
+Re-ran Z1, Z3, Z4 on v1.51 (Z2 already verified on initial commit). All 4 ✅:
+- Z1 ✅ `68712fe4` — JSDoc on `flattenError` (3 overloads, 455-line file) — structural anchor v2 found implementation overload, JSDoc placed correctly
+- Z3 ✅ `9a2bb138` — `summarizeErrors` helper added to errors.ts
+- Z4 ✅ `2a2f7259` — `ZOD_LOCALE_VERSION = "4.0"` const in en.ts
+
+Cross-repo zod went from 0/4 (v1.50) → **4/4 (100%)** with v1.51 extension auto-detection. Combined with v1.50 anchor v2 (overload disambiguation works on Z1's flattenError), the system now transfers cleanly to a new TypeScript repo with strict gitignore + extensive test suite.
+
+**Cross-repo summary update:**
+| Repo | v1.50 | v1.51 |
+|------|-------|-------|
+| hono | 6/6 | 6/6 |
+| trpc | 5/6 | 5/6 |
+| vite | 0/6 | (would benefit from infra fixes) |
+| zod | 0/4 | **4/4** |
+
+---
+
 ## v1.51 — TesterAgent test extension auto-detection (2026-05-15)
 
 `ProjectConventions.testFileExtension` — new field. `detectTestFileExtension(root)` scans `src/`, `packages/`, `tests/`, `test/`, `__tests__/` (depth ≤4, skips `node_modules`, `dist`, `build`, `coverage`, dot-dirs) for files matching `.test.ts`, `.test.tsx`, `.test.js`, `.test.mjs`, `.spec.ts`, `.spec.js` and returns the most frequent. Falls back to `.test.ts` for empty TypeScript projects. `Orchestrator.validateAndFilterTestFiles` rewrites generated test paths to match the detected extension before disk write — closes the cross-repo `.test.js` vs `.test.ts` mismatch that blocked vite + zod (zod gitignores `.test.js`). **Verification:** zod Z2 (getZodVersion helper) — was `validation_pass` + git fail in cross-repo bench; now ✅ commit `f1155c63` (TesterAgent generated `version.test.ts` with correct extension, dropped at dry-run, production `version.ts` committed). +5 unit tests. **589/589.**
