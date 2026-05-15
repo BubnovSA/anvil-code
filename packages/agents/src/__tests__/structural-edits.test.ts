@@ -641,6 +641,23 @@ describe('locateAddExport', () => {
     const r = locateAddExport(content, "export { x };");
     expect(r.ok).toBe(true);
   });
+
+  it('rejects duplicate function name — prevents double add_export in one step', () => {
+    const content = 'export function foo(): void {}\n';
+    const r = locateAddExport(content, 'export function foo(): string { return ""; }');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/already exists/);
+    expect(r.error).toMatch(/done\(\)/);
+  });
+
+  it('rejects duplicate const name', () => {
+    const content = 'export const VERSION = "1.0";\n';
+    const r = locateAddExport(content, 'export const VERSION = "2.0";');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/already exists/);
+  });
 });
 
 // v1.50 — structural anchor v2: overload disambiguation + property arrow functions

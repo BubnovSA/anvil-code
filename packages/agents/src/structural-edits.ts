@@ -761,7 +761,28 @@ export function locateAddExport(content: string, source: string): LocateResult {
     };
   }
 
+  // Extract the declared name from the new export to guard against duplicates.
+  const newName = (() => {
+    if (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) return stmt.name?.text;
+    if (ts.isVariableStatement(stmt)) return stmt.declarationList.declarations[0]?.name && ts.isIdentifier(stmt.declarationList.declarations[0].name) ? stmt.declarationList.declarations[0].name.text : undefined;
+    return undefined;
+  })();
+
   const sf = parseFile(content);
+
+  // Reject if a top-level symbol with the same name already exists — prevents
+  // duplicate definitions when Coder calls add_export twice in one step.
+  if (newName) {
+    for (const s of sf.statements) {
+      const existingName = ts.isFunctionDeclaration(s) ? s.name?.text
+        : ts.isClassDeclaration(s) ? s.name?.text
+        : ts.isVariableStatement(s) && ts.isIdentifier(s.declarationList.declarations[0]?.name) ? s.declarationList.declarations[0].name.text
+        : undefined;
+      if (existingName === newName) {
+        return { ok: false, error: `'${newName}' already exists in this file — call done() if you have already added it, or use replace_function/replace_in_file to modify the existing definition` };
+      }
+    }
+  }
 
   let lastExport: ts.Statement | null = null;
   let lastImport: ts.Statement | null = null;
