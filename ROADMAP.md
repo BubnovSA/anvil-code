@@ -4,7 +4,7 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.55 done (2026-05-16). Structural anchor v3 (current content в property arrow error). Sandbox smoke 3/3 ✅. Real-repo hono 2/2 ✅. L6: 3/4 (без регрессии). Cross-repo vite: 2/6. Remaining ceiling: 32K aux model нужен для context.ts 780 строк + vite large files. 589 тестов.
+**Статус:** 🟢 v1.55 + 32K model done (2026-05-16). Cross-repo vite: **3/6 ✅** (V1+V2+V5). qwen2.5-coder-32B ctx-32k как LLM_SMALL_MODEL — V1 починен (был llama-swap 400), V3 unblocked (код генерируется, test fail). L6: 3/4. Sandbox 3/3 ✅. 589 тестов.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.

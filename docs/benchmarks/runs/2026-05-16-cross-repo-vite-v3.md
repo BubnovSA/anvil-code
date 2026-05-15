@@ -110,3 +110,20 @@ failure, not infra — progress vs v1.52 where it was "code identical to origina
 | T1/T2 — trpc real-repo | trpc (real) | ❌ wrong prompts | paths assumed sandbox structure; not a regression |
 
 **Verdict: no regression from v1.53–v1.55.** hono 2/2 committed, sandbox 3/3. Real-repo trpc tasks used wrong file paths (real tRPC repo ≠ sandbox structure).
+
+---
+
+# Targeted Re-test — 32K Small Model (2026-05-16, config: 6567887)
+
+`LLM_SMALL_MODEL` upgraded from `qwen3-6-35b ctx-16k` → `qwen2-5-coder-32b ctx-32k`.
+
+| Task | qwen3 16K | qwen2.5-coder 32K | Delta |
+|------|-----------|-------------------|-------|
+| V1 — JSDoc on defineConfig | ❌ llama-swap 400 (25718 tok) | ✅ **committed** (~6min) | **+1** |
+| V3 — parseAcceptHeader in utils.ts | ❌ llama-swap 400 (21417 tok) | ❌ commit_skipped (code generated, test fail) | progress |
+| V5 — HMR_HEADER_NAME | ✅ | ✅ | = |
+
+**V1 fixed** — 32K ctx eliminates the Planner/Reviewer 400 on large RAG contexts.
+**V3 unblocked at code level** — Coder now generates `parseAcceptHeader` in utils.ts (53KB file modified). Tests fail post-change (Fixer 3 attempts, couldn't resolve). Next step: analyze test failure — likely Coder broke something in the 1835-line file.
+
+**Cumulative vite score (all fixes combined):** V1 ✅ V2 ✅ V5 ✅ = **3/6** (was 0/6 at v1.52 baseline).
