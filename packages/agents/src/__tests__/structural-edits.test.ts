@@ -642,3 +642,58 @@ describe('locateAddExport', () => {
     expect(r.ok).toBe(true);
   });
 });
+
+// v1.50 — structural anchor v2: overload disambiguation + property arrow functions
+describe('locateReplaceMethod v2 (v1.50)', () => {
+  it('targets the implementation overload (with body) when multiple overloads exist', () => {
+    const content = [
+      'class Svc {',
+      '  exec(a: string): string;',
+      '  exec(a: number): number;',
+      '  exec(a: string | number): string | number {',
+      '    return a;',
+      '  }',
+      '}',
+    ].join('\n');
+    // Without nearLine — should pick the implementation (last, has body)
+    const r = locateReplaceMethod(content, 'Svc', 'exec', 'exec(a: string | number): string | number { return String(a); }');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    if (r.edit.kind !== 'replace') return;
+    // Implementation starts at line 4 (1-based)
+    expect(r.edit.startLine).toBe(4);
+  });
+
+  it('uses nearLine to pick among multiple candidates with bodies', () => {
+    const content = [
+      'class Svc {',
+      '  run(): void { /* first */ }',
+      '  run(): void { /* second */ }',
+      '}',
+    ].join('\n');
+    const near2 = locateReplaceMethod(content, 'Svc', 'run', 'run(): void { /* replaced first */ }', 2);
+    const near3 = locateReplaceMethod(content, 'Svc', 'run', 'run(): void { /* replaced second */ }', 3);
+    expect(near2.ok).toBe(true);
+    expect(near3.ok).toBe(true);
+    if (!near2.ok || !near3.ok) return;
+    if (near2.edit.kind !== 'replace' || near3.edit.kind !== 'replace') return;
+    expect(near2.edit.startLine).toBe(2);
+    expect(near3.edit.startLine).toBe(3);
+    expect(near2.edit.startLine).not.toBe(near3.edit.startLine);
+  });
+
+  it('returns helpful error when member is a property arrow function', () => {
+    const content = [
+      'class Ctx {',
+      '  header = (name: string): string | undefined => {',
+      '    return this.req.headers.get(name) ?? undefined;',
+      '  };',
+      '}',
+    ].join('\n');
+    const r = locateReplaceMethod(content, 'Ctx', 'header', 'header(name: string): string | undefined { return ""; }');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/property arrow function/);
+    expect(r.error).toMatch(/replace_in_file/);
+  });
+});

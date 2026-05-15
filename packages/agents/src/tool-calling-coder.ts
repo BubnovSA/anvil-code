@@ -263,7 +263,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: 'replace_method',
       description:
-        "Rewrite the body+signature of an existing method on a top-level class. `source` is the full new method declaration (modifiers + signature + body); its method name must match `name`. Decorators/modifiers in source replace the previous ones. Leading jsdoc comments above the method are preserved (they sit on different lines outside the replace range). To rename, use delete_file/replace_in_file or remove + add_method.",
+        "Rewrite the body+signature of an existing method on a top-level class. `source` is the full new method declaration (modifiers + signature + body); its method name must match `name`. Decorators/modifiers in source replace the previous ones. Leading jsdoc comments above the method are preserved. When the class has multiple overloads with the same name, the implementation (the one with a body) is targeted automatically; pass optional `nearLine` (1-based line number from a prior read_file) to disambiguate among multiple implementations. If the member is a property arrow function, the error message will tell you to use replace_in_file instead.",
       parameters: {
         type: 'object',
         properties: {
@@ -271,6 +271,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           container: { type: 'string', description: 'Top-level class name owning the method' },
           name: { type: 'string', description: 'Existing method name to replace' },
           source: { type: 'string', description: 'Full new method declaration; method name must match `name`' },
+          nearLine: { type: 'number', description: 'Optional 1-based line hint from read_file to disambiguate multiple overloads with the same name' },
         },
         required: ['file', 'container', 'name', 'source'],
       },
@@ -723,11 +724,12 @@ export function dispatchToolCall(
       const container = String(args.container ?? '');
       const methodName = String(args.name ?? '');
       const source = typeof args.source === 'string' ? args.source : '';
+      const nearLine = typeof args.nearLine === 'number' ? args.nearLine : undefined;
       if (!container) return { text: 'error: replace_method requires "container"', done: false };
       if (!methodName) return { text: 'error: replace_method requires "name"', done: false };
       if (!source) return { text: 'error: replace_method requires "source"', done: false };
       return executeStructuralEdit('replace_method', filePath, ws, policy, c =>
-        locateReplaceMethod(c, container, methodName, source),
+        locateReplaceMethod(c, container, methodName, source, nearLine),
       );
     }
     case 'replace_function': {

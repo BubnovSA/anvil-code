@@ -68,11 +68,32 @@ function findFunction(sf: ts.SourceFile, name: string): ts.FunctionDeclaration |
 }
 
 /**
- * Find a regular method declaration on a class by simple identifier name.
- * Skips constructors, getters/setters, and computed-name members — those
- * have their own structural shape and aren't covered by replace_method v1.
+ * v1.50 — Find a method on a class by name with three improvements over v1:
+ *
+ * 1. Overload disambiguation: when a name has multiple MethodDeclaration nodes
+ *    (TypeScript overload signatures + implementation), prefer the one WITH a
+ *    body — that is the actual implementation. Overload signatures have no body
+ *    and replacing them produces a no-op or corrupts the file.
+ *
+ * 2. Property arrow-function fallback: real-world classes often express methods
+ *    as `name: SomeType = (...) => { ... }`. These are PropertyDeclarations,
+ *    not MethodDeclarations. When no MethodDeclaration matches, this function
+ *    falls back to a PropertyDeclaration whose initializer is an ArrowFunction
+ *    — returned as-is so the caller can build a replace_in_file edit instead.
+ *    The return type is broadened to ClassElement to cover both cases.
+ *
+ * 3. nearLine hint: when multiple candidates with bodies remain, pick the one
+ *    whose start line is closest to nearLine (1-based). Without a hint the last
+ *    with-body candidate is returned (implementation overload convention).
  */
-function findMethod(cls: ts.ClassDeclaration, name: string): ts.MethodDeclaration | null {
+function findMethod(
+  cls: ts.ClassDeclaration,
+  name: string,
+  sf?: ts.SourceFile,
+  nearLine?: number,
+): ts.MethodDeclaration | ts.PropertyDeclaration | null {
+  // Collect all MethodDeclaration candidates.
+  const methodCandidates: ts.MethodDeclaration[] = [];
   for (const m of cls.members) {
     if (
       ts.isMethodDeclaration(m) &&
@@ -80,9 +101,46 @@ function findMethod(cls: ts.ClassDeclaration, name: string): ts.MethodDeclaratio
       ts.isIdentifier(m.name) &&
       m.name.text === name
     ) {
+      methodCandidates.push(m);
+    }
+  }
+
+  if (methodCandidates.length > 0) {
+    if (methodCandidates.length === 1) return methodCandidates[0];
+
+    // Multiple → prefer candidates with a body (implementation overloads).
+    const withBody = methodCandidates.filter(m => m.body !== undefined);
+    const pool = withBody.length > 0 ? withBody : methodCandidates;
+
+    if (pool.length === 1) return pool[0];
+
+    // Use nearLine to pick the closest candidate.
+    if (nearLine !== undefined && sf) {
+      return pool.reduce((best, m) => {
+        const lineM = sf.getLineAndCharacterOfPosition(m.getStart(sf, false)).line + 1;
+        const lineBest = sf.getLineAndCharacterOfPosition(best.getStart(sf, false)).line + 1;
+        return Math.abs(lineM - nearLine) < Math.abs(lineBest - nearLine) ? m : best;
+      });
+    }
+
+    // Fallback: last candidate with body (implementation is always last in TS).
+    return pool[pool.length - 1];
+  }
+
+  // Property arrow-function fallback.
+  for (const m of cls.members) {
+    if (
+      ts.isPropertyDeclaration(m) &&
+      m.name &&
+      ts.isIdentifier(m.name) &&
+      m.name.text === name &&
+      m.initializer &&
+      ts.isArrowFunction(m.initializer)
+    ) {
       return m;
     }
   }
+
   return null;
 }
 
@@ -269,6 +327,7 @@ export function locateReplaceMethod(
   container: string,
   name: string,
   source: string,
+  nearLine?: number,
 ): LocateResult {
   const parsed = parseMethodSource(source);
   if ('error' in parsed) return { ok: false, error: parsed.error };
@@ -285,8 +344,21 @@ export function locateReplaceMethod(
   const cls = findClass(sf, container);
   if (!cls) return { ok: false, error: `class ${container} not found at top level` };
 
-  const method = findMethod(cls, name);
+  const method = findMethod(cls, name, sf, nearLine);
   if (!method) return { ok: false, error: `method ${container}.${name} not found` };
+
+  // v1.50 — property arrow functions (ts.PropertyDeclaration) are not directly
+  // replaceable via method-rewrite — guide the Coder to use replace_in_file.
+  if (ts.isPropertyDeclaration(method)) {
+    const startPos = method.getStart(sf, false);
+    const { line: startLine0 } = sf.getLineAndCharacterOfPosition(startPos);
+    return {
+      ok: false,
+      error:
+        `${container}.${name} is a property arrow function, not a method declaration ` +
+        `(found at line ${startLine0 + 1}). Use replace_in_file with the exact line range to rewrite it.`,
+    };
+  }
 
   const startPos = method.getStart(sf, /*includeJsDoc*/ false);
   const endPos = method.getEnd();
