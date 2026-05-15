@@ -65,6 +65,11 @@ export const config = {
     maxContextTokens: envInt('RAG_MAX_CONTEXT_TOKENS', 8000),
     vectorsPath: env('VECTORS_PATH', 'data/vectors'),
     graphsPath: env('GRAPHS_PATH', 'data/graphs'),
+    // v1.47 — vector backend. 'hnsw' uses the existing hnswlib-node index
+    // (default, validated). 'qdrant' routes through a local Qdrant instance
+    // (see QDRANT_URL). Same VectorStore interface — switchable per project.
+    vectorBackend: env('VECTOR_BACKEND', 'hnsw') as 'hnsw' | 'qdrant',
+    qdrantUrl: env('QDRANT_URL', 'http://localhost:6333'),
     embedConcurrency: Math.max(1, envInt('EMBED_CONCURRENCY', 8)),
     fileConcurrency: Math.max(1, envInt('FILE_CONCURRENCY', 4)),
     rerankerEnabled: envBool('RAG_RERANKER_ENABLED', false),

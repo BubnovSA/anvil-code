@@ -7,7 +7,19 @@ import { createEmbedBackend, effectiveEmbedModel } from '@rag-system/model-route
 import type { ModelBackend } from '@rag-system/model-router';
 import { ASTParser, CodeGraph } from '@rag-system/code-graph';
 import { VectorStore } from './vector-store.js';
+import { QdrantVectorStore } from './qdrant-vector-store.js';
 import { BM25Index } from './bm25.js';
+
+type AnyVectorStore = VectorStore | QdrantVectorStore;
+
+function createVectorStore(vectorsDir?: string): AnyVectorStore {
+  const dir = path.resolve(vectorsDir ?? config.rag.vectorsPath);
+  if (config.rag.vectorBackend === 'qdrant') {
+    logger.info({ url: config.rag.qdrantUrl, dir }, 'Using Qdrant vector backend');
+    return new QdrantVectorStore(dir, config.rag.qdrantUrl, config.rag.embeddingDim);
+  }
+  return new VectorStore(vectorsDir);
+}
 
 /**
  * v1.32-d — nomic-embed-text-v1.5 was trained with task-specific prefixes.
@@ -45,7 +57,7 @@ interface RetrieverStore {
 }
 
 export class GraphRetriever {
-  private vectorStore: VectorStore;
+  private vectorStore: AnyVectorStore;
   private codeGraph: CodeGraph;
   private bm25Index: BM25Index;
   private embedClient: ModelBackend;
@@ -64,7 +76,7 @@ export class GraphRetriever {
 
   constructor(store?: RetrieverStore, paths?: { vectorsDir?: string; graphsDir?: string }) {
     this.graphsDir = path.resolve(paths?.graphsDir ?? config.rag.graphsPath);
-    this.vectorStore = new VectorStore(paths?.vectorsDir);
+    this.vectorStore = createVectorStore(paths?.vectorsDir);
     this.codeGraph = new CodeGraph(paths?.graphsDir);
     this.bm25Index = new BM25Index();
     this.embedClient = createEmbedBackend();
@@ -444,6 +456,20 @@ export class GraphRetriever {
     let processed = 0;
     const startedAt = Date.now();
     let lastTickAt = 0;
+
+    // v1.47 — when the vector store is empty (e.g. fresh Qdrant collection after
+    // a backend switch from HNSW) but file hashes still exist in SQLite, every file
+    // would be skipped and the new index would remain empty. Detect this and force
+    // a full re-index by clearing all stored hashes so they don't match.
+    if (this.store && this.vectorStore.size === 0) {
+      const hasHashes = files.some(f => this.store!.getFileHash(f) !== undefined);
+      if (hasHashes) {
+        logger.info({ indexId }, 'Vector store empty but file hashes present — forcing full re-index');
+        for (const f of files) {
+          try { this.store.saveFileHash(f, ''); } catch { /* ignore */ }
+        }
+      }
+    }
 
     logger.info(
       { indexId, files: files.length, root: absRoot, fileConcurrency: config.rag.fileConcurrency },
