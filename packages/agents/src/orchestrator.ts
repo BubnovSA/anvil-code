@@ -93,7 +93,12 @@ export class Orchestrator {
     return buildRepoMap(this.retriever.graph, this.writer.root, { highlightFiles: highlights });
   }
 
-  async runTask(taskId: string, description: string, mode: 'fast'|'balanced'|'deep' = 'balanced') {
+  async runTask(
+    taskId: string,
+    description: string,
+    mode: 'fast'|'balanced'|'deep' = 'balanced',
+    shouldCancel?: () => boolean,
+  ) {
     const log = taskLogger(taskId);
     log.info({ mode }, 'Orchestrator started task');
 
@@ -165,6 +170,7 @@ export class Orchestrator {
       plan.steps,
       mode,
       log,
+      shouldCancel,
     );
 
     if (completedSteps.size === 0) {
@@ -382,6 +388,7 @@ export class Orchestrator {
     steps: Array<{ id: string; description: string; dependencies: string[] }>,
     mode: 'fast'|'balanced'|'deep',
     log: ReturnType<typeof taskLogger>,
+    shouldCancel?: () => boolean,
   ): Promise<{ allFileChanges: FileChange[]; completedSteps: Set<string>; failedSteps: Set<string>; stepFailures: Map<string, string>; noopStepIds: Set<string> }> {
     detectCycles(steps);
 
@@ -402,6 +409,13 @@ export class Orchestrator {
 
     const launch = (step: { id: string; description: string; dependencies: string[]; kind?: PlanStep['kind'] }) => {
       remaining.delete(step.id);
+
+      // Cancellation check — abort launch if task was cancelled between steps.
+      if (shouldCancel?.()) {
+        failedSteps.add(step.id);
+        stepFailures.set(step.id, 'Task cancelled');
+        return;
+      }
 
       const blockedBy = step.dependencies.filter(d => failedSteps.has(d));
       if (blockedBy.length > 0) {

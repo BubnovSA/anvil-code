@@ -666,6 +666,58 @@ describe('Orchestrator validation incompleteness guard (v1.39-b)', () => {
   });
 });
 
+// Task cancellation — when shouldCancel() returns true between steps,
+// the step is marked failed and the task throws rather than hanging.
+describe('Orchestrator task cancellation', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('skips remaining steps when cancelled between launches', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [
+        { id: 'a', description: 'a', dependencies: [] },
+        { id: 'b', description: 'b', dependencies: ['a'] },
+      ],
+    });
+
+    let cancelled = false;
+    // Cancel after step a completes (before b is launched).
+    let coderCalls = 0;
+    (orch as unknown as { coder: { execute: ReturnType<typeof vi.fn> } }).coder = {
+      execute: vi.fn(async () => {
+        coderCalls++;
+        if (coderCalls === 1) cancelled = true; // cancel after step a
+        return { files: [{ action: 'create', path: `step-${coderCalls}.ts`, content: 'x' }] };
+      }),
+    };
+
+    // shouldCancel returns true from the second check onward
+    const shouldCancel = () => cancelled;
+
+    // Step a completed, step b was skipped by cancellation → partial result.
+    const taskId = 'task-cancel';
+    const captured: TaskEvent[] = [];
+    taskEvents.on(`task:${taskId}`, e => captured.push(e));
+    try {
+      await orch.runTask(taskId, 'cancel test', 'balanced', shouldCancel);
+    } finally {
+      taskEvents.off(`task:${taskId}`, captured.push.bind(captured));
+    }
+    const done = captured.find(e => e.type === 'done');
+    expect(done).toBeDefined();
+    // b was skipped due to cancellation — appears in failedStepIds
+    const doneData = done!.data as { failedStepIds: string[] };
+    expect(doneData.failedStepIds).toContain('b');
+  });
+
+  it('runs normally when shouldCancel always returns false', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'a', dependencies: [] }],
+    });
+    await expect(orch.runTask('task-no-cancel', 'no cancel', 'balanced', () => false))
+      .resolves.toBeUndefined();
+  });
+});
+
 // v1.41-a — Architect parse-fail retry. When ArchitectAgent.execute() throws
 // (Gemma outputs a preamble before JSON), the orchestrator retries once with a
 // JSON-only nudge. If both fail, the step continues with an empty design rather

@@ -13,6 +13,12 @@
 
 ---
 
+## v1.49 — Task cancellation (2026-05-15)
+
+`POST /task/:id/cancel` — operators can now stop a queued or running task. `MemoryQueue.cancel(id)` sets status to `'cancelled'`; `isCancelled(id)` lets callers poll. `JobWorker` checks cancellation before starting execution and creates a `shouldCancel: () => boolean` callback passed to `Orchestrator.runTask`. `executePlanParallel` checks `shouldCancel()` before launching each step — running steps complete naturally (no mid-LLM-call interruption), pending steps are skipped. `TaskEventType` extended with `'cancelled'`. +2 unit tests (cancelled mid-run partial result, no-cancel normal run). 578 passing.
+
+---
+
 ## v1.48 Qdrant payload filter bench (2026-05-15)
 
 Re-indexed trpc (907 files → 2292 Qdrant vectors, 13s). Ran T2+T5 with `VECTOR_BACKEND=qdrant`. T2 `extractPackageScope("packages/server/src/http/...")` = `packages/server` → Qdrant search filtered to `packages/server/` files. **Pattern shift:** T2 was `ts_fail` (TS2307 bad import) with HNSW → `reviewer_reject` with Qdrant (Coder now finds correct files, but implementation names/imports still model-variance). T5 submission failed (JSON escape issue). Conclusion: payload filter improves retrieval precision (Coder reaches correct package), but implementation quality on complex trpc tasks remains at Gemma 26B capability boundary. Not a retrieval problem — a model problem.

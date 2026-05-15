@@ -23,6 +23,7 @@ export type TaskEventType =
   // refuses (conflict / non-fast-forward) — the task itself stays `done`.
   | 'cumulative_merged'
   | 'cumulative_merge_failed'
+  | 'cancelled'
   | 'done'
   | 'error'
   // Indexing pipeline events. The "taskId" carries an indexId of the form

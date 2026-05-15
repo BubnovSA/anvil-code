@@ -4,7 +4,7 @@ import type { MemoryStore } from '@rag-system/memory';
 import { MemoryQueue } from './queue.js';
 
 interface TaskRunner {
-  runTask(id: string, description: string, mode: TaskMode): Promise<void>;
+  runTask(id: string, description: string, mode: TaskMode, shouldCancel?: () => boolean): Promise<void>;
 }
 
 interface ProjectStores {
@@ -87,15 +87,36 @@ export class JobWorker {
     stores.store.updateTaskStatus(job.id, 'running');
     taskEvents.emitEvent({ taskId: job.id, type: 'running', message: 'Job started' });
 
+    // Check cancellation before starting — job may have been cancelled while queued.
+    if (this.queue.isCancelled(job.id)) {
+      log.info('Job cancelled before execution');
+      taskEvents.emitEvent({ taskId: job.id, type: 'cancelled', message: 'Task cancelled before execution' });
+      this.processing = false;
+      return;
+    }
+
+    const shouldCancel = () => this.queue.isCancelled(job.id);
+
     try {
-      await stores.orchestrator.runTask(job.id, job.description, job.mode);
-      this.queue.updateStatus(job.id, 'completed');
+      await stores.orchestrator.runTask(job.id, job.description, job.mode, shouldCancel);
+      if (this.queue.isCancelled(job.id)) {
+        log.info('Job cancelled during execution');
+        stores.store.updateTaskStatus(job.id, 'failed', 'Cancelled');
+        taskEvents.emitEvent({ taskId: job.id, type: 'cancelled', message: 'Task cancelled' });
+      } else {
+        this.queue.updateStatus(job.id, 'completed');
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      log.error({ error: message }, 'Job failed');
-      this.queue.updateStatus(job.id, 'failed', message);
-      stores.store.updateTaskStatus(job.id, 'failed', message);
-      taskEvents.emitEvent({ taskId: job.id, type: 'error', message });
+      if (this.queue.isCancelled(job.id)) {
+        log.info('Job cancelled (threw during cancellation)');
+        taskEvents.emitEvent({ taskId: job.id, type: 'cancelled', message: 'Task cancelled' });
+      } else {
+        log.error({ error: message }, 'Job failed');
+        this.queue.updateStatus(job.id, 'failed', message);
+        stores.store.updateTaskStatus(job.id, 'failed', message);
+        taskEvents.emitEvent({ taskId: job.id, type: 'error', message });
+      }
     } finally {
       this.processing = false;
     }

@@ -173,6 +173,15 @@ export function buildServer(deps: BuildServerDeps) {
     request.raw.on('close', cleanup);
   });
 
+  // Cancel a queued or running task. Returns 200 if found, 404 if unknown.
+  app.post('/task/:id/cancel', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const found = queue.cancel(id);
+    if (!found) return reply.code(404).send({ error: `Task '${id}' not found` });
+    taskEvents.emitEvent({ taskId: id, type: 'cancelled', message: 'Task cancelled by operator' });
+    return reply.code(200).send({ task_id: id, status: 'cancelled' });
+  });
+
   app.get('/task/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
 

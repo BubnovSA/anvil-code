@@ -6,7 +6,7 @@ export interface Job {
   projectId: string;
   description: string;
   mode: TaskMode;
-  status: 'queued' | 'running' | 'completed' | 'failed';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   priority: number;
   createdAt: number;
   error?: string;
@@ -45,6 +45,20 @@ export class MemoryQueue {
       job.status = status;
       if (error) job.error = error;
     }
+  }
+
+  // Cancel a queued or running job. Returns true if found, false if unknown.
+  cancel(id: string): boolean {
+    const job = this.jobs.get(id);
+    if (!job) return false;
+    if (job.status === 'queued' || job.status === 'running') {
+      job.status = 'cancelled';
+    }
+    return true;
+  }
+
+  isCancelled(id: string): boolean {
+    return this.jobs.get(id)?.status === 'cancelled';
   }
 
   getJob(id: string): Job | undefined {
