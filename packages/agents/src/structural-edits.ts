@@ -351,12 +351,17 @@ export function locateReplaceMethod(
   // replaceable via method-rewrite — guide the Coder to use replace_in_file.
   if (ts.isPropertyDeclaration(method)) {
     const startPos = method.getStart(sf, false);
+    const endPos = method.getEnd();
     const { line: startLine0 } = sf.getLineAndCharacterOfPosition(startPos);
+    const { line: endLine0 } = sf.getLineAndCharacterOfPosition(endPos);
     return {
       ok: false,
       error:
-        `${container}.${name} is a property arrow function, not a method declaration ` +
-        `(found at line ${startLine0 + 1}). Use replace_in_file with the exact line range to rewrite it.`,
+        `${container}.${name} is a property arrow function, not a method declaration. ` +
+        `It spans lines ${startLine0 + 1}–${endLine0 + 1} in this file. ` +
+        `To modify it: call read_file to see the current content at those lines, ` +
+        `then use replace_in_file(file, ${startLine0 + 1}, ${endLine0 + 1}, new_text) ` +
+        `where new_text is the full replacement for the property including the trailing semicolon.`,
     };
   }
 

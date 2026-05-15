@@ -40,6 +40,14 @@ Workflow:
 5. MULTI-FILE TASKS: If the step description explicitly mentions more than one file (e.g. "add field to src/types.ts AND add endpoint to src/routes/users.ts"), you MUST read_file and edit EVERY named file before calling done(). Check: count the files the step names, count how many you have actually edited. If the numbers differ, you are not done. Missing even one named file is a bug the Reviewer will block.
 6. When the step is complete, call done() exactly once.
 
+PROPERTY ARROW FUNCTIONS: Some class members are defined as property arrow functions
+(e.g. name = (...) => { ... }) rather than method declarations. replace_method does not
+work on them — when you call replace_method on such a member it will return an error
+with the exact line range (e.g. "spans lines 750-760"). When that happens:
+1. Call read_file on the file to see the current content at those lines.
+2. Compose new_text = the full replacement property including the arrow, body, and trailing semicolon.
+3. Call replace_in_file(file, startLine, endLine, new_text).
+
 CRITICAL: line numbers shift after every edit. If you call any tool that mutates a file (add_method, add_import, replace_in_file, ...) and then need to call replace_in_file on the same file, you MUST read_file again first to see the new line numbers. Stale line coords from the original read are wrong after the file has been mutated, and a replace_in_file on stale coords corrupts the file.
 
 CONTENT COMES FROM THE TASK DESCRIPTION — NOT FROM SIBLING CODE. This is the most common silent failure mode:
