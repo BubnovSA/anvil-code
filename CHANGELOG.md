@@ -13,6 +13,12 @@
 
 ---
 
+## Cross-repo bench: zod (2026-05-15)
+
+zod (colinhacks/zod, 402 TS files, 1761 vectors, clean test setup unlike vite). 4 tasks tried: 0/4 commits, but Z2 produced correct code (`version.ts` added, validation_pass) — blocked at commit by TesterAgent generating `.test.js` (zod gitignores `.test.js`, accepts only `.test.ts`). Earlier round with hallucinated function names (`issuesToZodError`, `formatZodError`) → both noop. Coder correctly returns no changes for non-existent targets. Z1/Z3/Z4 (real targets) → test_fail (zod's 3811-test suite is sensitive to additions; TesterAgent tests likely fail). Combined cross-repo finding: code generation works, validation pipeline assumes simpler test/git setup than mature OSS projects have. Bench: [2026-05-15-cross-repo-zod.md](docs/benchmarks/runs/2026-05-15-cross-repo-zod.md).
+
+---
+
 ## Cross-repo bench: vite (2026-05-15)
 
 First non-hono/trpc bench — vite (vitejs/vite, 1413 files, 1598 vectors). 0/6 tasks committed, but failures are infrastructure (vite needs `pnpm install && pnpm build` before tests run; vitest crashes at startup), context (utils.ts 1835 lines exceeds qwen3 16K context for Reviewer/Tester), and one model variance (V1 llm_parse_fail). V5 production code was correct (`HMR_HEADER_NAME` added to constants.ts) but vitest crash blocked commit. Honest finding: cross-repo transferability requires pre-flight check that test pipeline runs cleanly on baseline. Bench: [2026-05-15-cross-repo-vite.md](docs/benchmarks/runs/2026-05-15-cross-repo-vite.md).
