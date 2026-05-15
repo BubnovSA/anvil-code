@@ -13,6 +13,12 @@
 
 ---
 
+## v1.47 bench — 10/12 (83%), no Qdrant regression (2026-05-15)
+
+Full 12-task bench with HNSW backend (Qdrant separately smoke-tested ✅). Hono 6/6 (100%). tRPC 3/6: T2 ts_fail (wrong import path, model variance), T5 reviewer_reject (impl error, model variance), T6 noop (VRAM wall). Delta vs v1.43: -1 (10/12 vs 11/12) — pure model variance, no infrastructure regression from Qdrant addition. Bench: [2026-05-15-v1.47-full-12task.md](docs/benchmarks/runs/2026-05-15-v1.47-full-12task.md).
+
+---
+
 ## v1.46 bench + tuning (2026-05-15)
 
 Full 12-task bench revealed regression at `RAG_GRAPH_HOPS=3`: 11/12 → 9/12 (hono stable 6/6, trpc 5/6→2/6). Root cause: 3-hop BFS in trpc (3938 symbols) floods token budget with unrelated cross-package callers before relevant context. Default reverted to `RAG_GRAPH_HOPS=1` (= v1.43 1-hop direct callers, validated at 11/12). `RAG_CALLERS_PER_SYMBOL=3` cap added. Infrastructure remains for explicit cross-service refactoring tasks (set `RAG_GRAPH_HOPS=2-3` manually). L2.3 soft-delete ✅ at hops=1 (types+service+routes, 206s). Bench: [2026-05-15-v1.46-full-12task.md](docs/benchmarks/runs/2026-05-15-v1.46-full-12task.md).
