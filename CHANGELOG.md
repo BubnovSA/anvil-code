@@ -13,6 +13,12 @@
 
 ---
 
+## v1.51 — TesterAgent test extension auto-detection (2026-05-15)
+
+`ProjectConventions.testFileExtension` — new field. `detectTestFileExtension(root)` scans `src/`, `packages/`, `tests/`, `test/`, `__tests__/` (depth ≤4, skips `node_modules`, `dist`, `build`, `coverage`, dot-dirs) for files matching `.test.ts`, `.test.tsx`, `.test.js`, `.test.mjs`, `.spec.ts`, `.spec.js` and returns the most frequent. Falls back to `.test.ts` for empty TypeScript projects. `Orchestrator.validateAndFilterTestFiles` rewrites generated test paths to match the detected extension before disk write — closes the cross-repo `.test.js` vs `.test.ts` mismatch that blocked vite + zod (zod gitignores `.test.js`). **Verification:** zod Z2 (getZodVersion helper) — was `validation_pass` + git fail in cross-repo bench; now ✅ commit `f1155c63` (TesterAgent generated `version.test.ts` with correct extension, dropped at dry-run, production `version.ts` committed). +5 unit tests. **589/589.**
+
+---
+
 ## Cross-repo bench: zod (2026-05-15)
 
 zod (colinhacks/zod, 402 TS files, 1761 vectors, clean test setup unlike vite). 4 tasks tried: 0/4 commits, but Z2 produced correct code (`version.ts` added, validation_pass) — blocked at commit by TesterAgent generating `.test.js` (zod gitignores `.test.js`, accepts only `.test.ts`). Earlier round with hallucinated function names (`issuesToZodError`, `formatZodError`) → both noop. Coder correctly returns no changes for non-existent targets. Z1/Z3/Z4 (real targets) → test_fail (zod's 3811-test suite is sensitive to additions; TesterAgent tests likely fail). Combined cross-repo finding: code generation works, validation pipeline assumes simpler test/git setup than mature OSS projects have. Bench: [2026-05-15-cross-repo-zod.md](docs/benchmarks/runs/2026-05-15-cross-repo-zod.md).
