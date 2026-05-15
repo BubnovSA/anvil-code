@@ -4,12 +4,12 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.46 done (2026-05-15) — BFS инфраструктура, **default hops=1** (reverted после bench: hops=3 дал 9/12 регрессию vs 11/12 baseline). Bench doc: 2026-05-15-v1.46-full-12task.md. 569/569.
+**Статус:** 🟢 v1.48 done (2026-05-15) — Qdrant Phase 5 + payload filter, N-hop BFS (hops=1 default), monorepo meta, TesterAgent hardening, FEATURE_SPEC multi-file. Real-repo: **11/12 (92%)**. Cumulative: **6/6 ✅**. 576 тестов.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.
 **Backend:** llama-swap (local endpoint, see `.env`), tool-calling Coder/Fixer дефолт.
-**Тесты:** 569/569 unit-tests, 12/12 пакетов чисто.
+**Тесты:** 576/576 unit-tests (+ 3 pre-existing ASTParser native failures), 12/12 пакетов чисто.
 **Последнее обновление:** 2026-05-14.
 
 ---

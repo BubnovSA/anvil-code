@@ -103,6 +103,23 @@ The code graph (`packages/code-graph/`) carries a **reverse index** (`reverseInd
 
 Bench result: 6/6 sequential tasks committed on sandbox with zero manual merges (v1.45, 2026-05-15).
 
+## Qdrant vector backend (Phase 5)
+
+Activated via `VECTOR_BACKEND=qdrant` (default `hnsw`). Requires a running Qdrant instance:
+
+```bash
+docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
+```
+
+`QdrantVectorStore` (`packages/rag/src/qdrant-vector-store.ts`) implements the same interface as HNSW:
+- Collection auto-created per project from `vectorsDir` slug (`anvil_<slug>`)
+- SHA-1 UUID point ids (deterministic, valid UUID format)
+- `payload.filePath` stored on every point for scope-filtered retrieval
+- `save()`/`loadFromDisk()` are no-ops — Qdrant persists automatically
+- On backend switch (HNSW → Qdrant): collection is empty but file hashes exist in SQLite → force full re-index triggered automatically
+
+**Payload-filtered retrieval** (`v1.48`): `GraphRetriever.extractPackageScope(query)` extracts the first `packages/<pkg>` path from the task description. When found, the vector search is scoped to files under that package path — eliminates cross-package noise in dense monorepos like trpc (3938 symbols across 8 packages). HNSW users see no behavior change (filter silently ignored).
+
 ## API surface
 
 `packages/api/`:
