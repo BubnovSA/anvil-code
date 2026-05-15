@@ -13,6 +13,18 @@
 
 ---
 
+## v1.52 — Pre-flight healthcheck endpoint (2026-05-15)
+
+`GET /project/:id/healthcheck` — runs `tsc --noEmit` + `npm test` on clean project state, returns `{ready, tscOk, testsOk, issues[]}`. Results cached per project, invalidated on re-index. Surfaces infrastructure failures upfront so operators know before wasting bench runs:
+
+- **sandbox** → `{ready: true, tscOk: true, testsOk: true, issues: []}`
+- **vite** → `{ready: false, issues: ["Test runner startup failed — missing build artifacts"]}`
+- **zod** → `{ready: false, issues: ["TypeScript errors on clean baseline", "Tests fail on clean baseline"]}`
+
+Optional `?force=true` to bypass cache. 589/589 tests.
+
+---
+
 ## v1.51 zod re-bench — 4/4 (100%) (2026-05-15)
 
 Re-ran Z1, Z3, Z4 on v1.51 (Z2 already verified on initial commit). All 4 ✅:

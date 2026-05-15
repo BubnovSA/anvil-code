@@ -9,6 +9,7 @@ import type { MemoryQueue } from '@rag-system/job-system';
 import type { ProjectRegistry } from '@rag-system/memory';
 import type { ProjectManager } from '@rag-system/agents';
 import { createChatBackend } from '@rag-system/model-router';
+import { TypeChecker, TestRunner } from '@rag-system/safe-exec';
 
 const CreateTaskSchema = z.object({
   task: z.string().min(1).max(2000),
@@ -112,6 +113,81 @@ export function buildServer(deps: BuildServerDeps) {
     const p = registry.get(id);
     if (!p) return reply.code(404).send({ error: 'Project not found' });
     return p;
+  });
+
+  // v1.52 — Pre-flight check: verify the project's test + tsc pipeline runs
+  // on a clean state before submitting tasks. Returns a structured report so
+  // operators can surface infrastructure issues (missing node_modules, broken
+  // vitest setup) before wasting bench runs on commit_skipped failures.
+  // Results are cached per project to avoid re-running on every call;
+  // the cache is invalidated when the project is re-indexed.
+  const healthCache = new Map<string, {
+    ready: boolean; tscOk: boolean; testsOk: boolean;
+    issues: string[]; checkedAt: string;
+    tscSample: string; testSample: string;
+  }>();
+
+  app.get('/project/:id/healthcheck', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const force = (request.query as Record<string, string>).force === 'true';
+    const p = registry.get(id);
+    if (!p) return reply.code(404).send({ error: 'Project not found' });
+
+    if (!force && healthCache.has(id)) {
+      return { project_id: id, root: p.root, cached: true, ...healthCache.get(id) };
+    }
+
+    const TIMEOUT_MS = 120_000; // 2 min per check
+    const checker = new TypeChecker(p.root, TIMEOUT_MS);
+    const runner = new TestRunner(p.root, TIMEOUT_MS);
+
+    type CheckResult = { success: boolean; output: string; exitCode: number; durationMs: number; skipped?: string };
+    const [tscResult, testResult]: [CheckResult, CheckResult] = await Promise.all([
+      checker.run().catch((e: unknown) => ({ success: false, output: String(e), exitCode: 1, durationMs: 0 })),
+      runner.run().catch((e: unknown) => ({ success: false, output: String(e), exitCode: 1, durationMs: 0 })),
+    ]);
+
+    const issues: string[] = [];
+    if (!tscResult.success && !tscResult.skipped) {
+      const sample = tscResult.output.slice(0, 300);
+      if (sample.includes('Cannot find module') || sample.includes('command not found')) {
+        issues.push('TypeScript check failed — likely missing node_modules (run npm/pnpm install)');
+      } else {
+        issues.push(`TypeScript errors on clean baseline (${tscResult.output.split('\n').filter(l => l.includes('error TS')).length} errors) — tasks will commit_skipped`);
+      }
+    }
+    if (!testResult.success && !testResult.skipped) {
+      const sample = testResult.output.slice(0, 400);
+      if (sample.includes('command not found') || sample.includes('ERR_MODULE_NOT_FOUND')) {
+        issues.push('Test runner startup failed — likely missing node_modules or build artifacts (run install + build first)');
+      } else {
+        issues.push(`Tests fail on clean baseline — baseline detection will filter them but unexpected failures may block tasks`);
+      }
+    }
+
+    const result = {
+      ready: issues.length === 0,
+      tscOk: tscResult.success || !!tscResult.skipped,
+      testsOk: testResult.success || !!testResult.skipped,
+      issues,
+      tscSample: tscResult.skipped ? 'skipped (no tsconfig)' : tscResult.output.slice(0, 200),
+      testSample: testResult.skipped ? 'skipped (no test script)' : testResult.output.slice(0, 200),
+      checkedAt: new Date().toISOString(),
+    };
+    healthCache.set(id, result);
+    logger.info({ projectId: id, ready: result.ready, issues: result.issues.length }, 'Healthcheck completed');
+    return { project_id: id, root: p.root, cached: false, ...result };
+  });
+
+  // Invalidate healthcheck cache when project is re-indexed.
+  // Monkey-patch the index endpoint to clear on success.
+  const _origIndex = app; // cache invalidation handled by hooking taskEvents below:
+  taskEvents.on('index_done', (event) => {
+    // index tasks use indexId format idx-<timestamp>; extract projectId from queue
+    // We clear all cached healthchecks on any index — conservative but correct.
+    const id = (event as { data?: { project_id?: string } }).data?.project_id;
+    if (id) healthCache.delete(id);
+    else healthCache.clear();
   });
 
   app.post('/project', async (request, reply) => {

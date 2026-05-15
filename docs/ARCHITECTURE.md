@@ -148,6 +148,7 @@ L6 bench (large-file surgery, v1.50): 3/4 — overload disambiguation works on 4
 | GET    | `/task/:id`                | Final task status                        |
 | GET    | `/task/:id/stream`         | SSE stream of `TaskEvent` records        |
 | POST   | `/task/:id/cancel`         | Cancel a queued or running task (v1.49)  |
+| GET    | `/project/:id/healthcheck` | Pre-flight: verify tsc + tests on clean state (v1.52) |
 | GET    | `/tasks`                   | List tasks (optionally filtered by project) |
 
 The SSE event format is defined in `packages/shared/src/task-events.ts`. High-frequency events (`agent_stream`, `index_file`, `index_skip`) bypass the replay buffer; the rest are kept so late-joining SSE clients see context.
