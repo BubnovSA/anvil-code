@@ -66,7 +66,20 @@ export class TestRunner {
       return { success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'no test script defined' };
     }
 
-    const result = await this.spawnWithTimeout('npm', ['test', '--silent']);
+    // If the project has a dedicated unit-test script AND the full `test` script chains
+    // multiple commands (e.g. unit && e2e), prefer the unit-only variant. E2e tests
+    // typically require a running server / browser and always fail in our environment,
+    // which breaks baseline detection and causes spurious commit_skipped outcomes.
+    const unitScriptKey = ['test-unit', 'test:unit'].find(k => pkg.scripts?.[k]);
+    const useUnitOnly = !!unitScriptKey && testScript.includes('&&');
+    const testCmd = useUnitOnly
+      ? ['npm', 'run', unitScriptKey!, '--silent']
+      : ['npm', 'test', '--silent'];
+    if (useUnitOnly) {
+      logger.info({ script: unitScriptKey }, 'TestRunner: using unit-only test script (full suite chains e2e)');
+    }
+
+    const result = await this.spawnWithTimeout(testCmd[0], testCmd.slice(1));
 
     // "No test found in suite" is not a real test failure — it occurs when TesterAgent
     // generates an empty describe() block (which vitest counts as an error). If this is
