@@ -97,3 +97,16 @@ failure, not infra — progress vs v1.52 where it was "code identical to origina
 | L6-simple — status() property arrow (context.ts 780 lines) | ❌ noop | Same file, same root cause |
 
 **v1.55 verdict:** Fix is correct for property arrow in files <~500 lines where model calls `replace_method`. For context.ts (780 lines), RAG context exceeds Gemma's effective engagement threshold → no tool calls at all → fix never fires. L6 baseline remains **3/4 (75%)**, same as v1.50. Needs 32K aux model to improve L6.4.
+
+---
+
+# Real-Repo Smoke — v1.55 regression check (2026-05-16)
+
+| Task | Repo | Result | Note |
+|------|------|--------|------|
+| H1 — @throws JSDoc on HonoRequest.json() | hono (real) | ✅ committed | request.ts +1 line |
+| H2 — isRedirectStatus() helper | hono (real) | ✅ committed | http-status.ts +4 lines |
+| L1.1 / L2.1 / L4.1 | sandbox | ✅ 3/3 | from earlier morning smoke |
+| T1/T2 — trpc real-repo | trpc (real) | ❌ wrong prompts | paths assumed sandbox structure; not a regression |
+
+**Verdict: no regression from v1.53–v1.55.** hono 2/2 committed, sandbox 3/3. Real-repo trpc tasks used wrong file paths (real tRPC repo ≠ sandbox structure).
