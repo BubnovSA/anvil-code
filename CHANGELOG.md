@@ -13,6 +13,16 @@
 
 ---
 
+## v1.53 — TestRunner unit-script preference (2026-05-16)
+
+**Root cause (vite cross-repo bench):** `npm test` in vite = `test-unit && test-serve && test-build`. E2e tests (test-serve/test-build) require a browser/server and always fail/timeout in our environment. Baseline detection captured no fingerprints → every post-change test failure treated as new → `commit_skipped` even when code was correct (V5: `HMR_HEADER_NAME = 'x-vite-hmr'` was correct but blocked).
+
+**Fix:** `TestRunner.run()` now checks for `test-unit` / `test:unit` scripts. If one exists AND the main `test` script chains via `&&`, runs the unit-only variant instead. Vite baseline now runs in ~4s, passes 802/806 tests. V5 constant task now commits in ~90s.
+
+**Side findings from vite bench:** TesterAgent generates invalid async patterns (`await` in sync `beforeEach`) for complex fs-mocking scenarios → V2 blocked. Large files (V3/V4/V6) still hit 16K context ceiling — needs 32K aux model. **589/589 unit tests.**
+
+---
+
 ## v1.52 — Pre-flight healthcheck endpoint (2026-05-15)
 
 `GET /project/:id/healthcheck` — runs `tsc --noEmit` + `npm test` on clean project state, returns `{ready, tscOk, testsOk, issues[]}`. Results cached per project, invalidated on re-index. Surfaces infrastructure failures upfront so operators know before wasting bench runs:

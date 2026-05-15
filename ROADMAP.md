@@ -4,13 +4,13 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.52 done (2026-05-15) — сессия завершена. Real-repo **11/12 (92%)**, Cumulative **6/6 ✅**, Cross-repo zod **4/4 ✅**, L6 large-file **3/4 (75%)**, 589 тестов. Все HIGH severity items закрыты. Pre-flight healthcheck endpoint добавлен. TesterAgent extension auto-detection. 15 версий (v1.39→v1.52) в одну сессию.
+**Статус:** 🟢 v1.53 done (2026-05-16). TestRunner unit-script preference — vite V5 (HMR_HEADER_NAME) теперь коммитит за ~90s. Cross-repo vite bench: 0/6→V5✅ (infra fix confirmed). Open: TesterAgent async pattern bug (V2), large-file navigation (V3/V4/V6 need 32K aux). 589 тестов.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.
 **Backend:** llama-swap (local endpoint, see `.env`), tool-calling Coder/Fixer дефолт.
 **Тесты:** 589/589 unit-tests (+ 3 pre-existing ASTParser native failures), 12/12 пакетов чисто.
-**Последнее обновление:** 2026-05-14.
+**Последнее обновление:** 2026-05-16.
 
 ---
 
