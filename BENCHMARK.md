@@ -11,7 +11,11 @@ Quantitative track record of the RAG System on TypeScript codebases. Methodology
 | `trpc/trpc`           | 907 TS files   | 6     | **67 %** (4/6, v1.43–v1.47 best) | pnpm monorepo, project refs |
 | **Combined real-repo** | | **12** | **92 % (11/12)** | v1.43 peak; 83–92% across runs |
 
-Sandbox numbers measure code-generation ceiling. Real-repo numbers measure operational ceiling. Combined 42 % → 92 % improvement from v1.38 → v1.48. Remaining failures: model variance on complex trpc internals (T2/T5) and VRAM wall on 900-line files (T6).
+Sandbox numbers measure code-generation ceiling. Real-repo numbers measure operational ceiling. Combined **42 % → 92 %** improvement from v1.38 → v1.50. Remaining failures: model variance on complex trpc internals (T2/T5) and VRAM wall on 900-line files (T6).
+
+Additional bench categories (v1.39+):
+- **Cumulative mode** (sequential tasks accumulating in `auto/cumulative`): **6/6** on sandbox.
+- **L6 large-file surgery** (overload disambiguation, property arrows): **3/4** on hono files >480 LOC.
 
 ---
 

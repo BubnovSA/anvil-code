@@ -120,6 +120,20 @@ docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
 
 **Payload-filtered retrieval** (`v1.48`): `GraphRetriever.extractPackageScope(query)` extracts the first `packages/<pkg>` path from the task description. When found, the vector search is scoped to files under that package path — eliminates cross-package noise in dense monorepos like trpc (3938 symbols across 8 packages). HNSW users see no behavior change (filter silently ignored).
 
+## Structural anchor v2 (v1.50)
+
+`replace_method` and `replace_function` use AST-based lookups (`structural-edits.ts`) to find the target by name, then return an edit with absolute line coordinates so the writer doesn't have to do fragile text-matching. v2 fixes two real-world failures:
+
+1. **Overload disambiguation:** TypeScript classes commonly have signature overloads above the implementation (e.g. `header(name: string): string; header(): Record<string,string>; header(name?: string) { ... }`). v1 took the first match — a signature without a body — corrupting the file. v2 prefers the implementation overload (the one with `body !== undefined`); when multiple bodies exist the optional `nearLine` parameter (1-based line hint from a prior `read_file`) picks the closest one.
+
+2. **Property arrow function fallback:** Many real classes express methods as `name = (...) => { ... }` properties rather than `MethodDeclaration` syntax. v1 returned "not found"; v2 detects the `PropertyDeclaration` and returns a precise error: "spans lines X–Y, use `replace_in_file(file, X, Y, new_text)`". The Coder system prompt has explicit 3-step recovery guidance for this pattern.
+
+L6 bench (large-file surgery, v1.50): 3/4 — overload disambiguation works on 489-line files; complex generics in 780-line files exceed model capability.
+
+## Task cancellation (v1.49)
+
+`POST /task/:id/cancel` marks the queued or running task as `cancelled` in `MemoryQueue`. `JobWorker` checks status before execution and passes a `shouldCancel: () => boolean` callback to `Orchestrator.runTask`. The orchestrator polls between step launches in `executePlanParallel` — running steps complete naturally (no mid-LLM interrupt), pending steps are skipped. SSE consumers receive a `cancelled` event.
+
 ## API surface
 
 `packages/api/`:
@@ -133,6 +147,7 @@ docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
 | POST   | `/task`                    | Submit a task; returns `task_id`         |
 | GET    | `/task/:id`                | Final task status                        |
 | GET    | `/task/:id/stream`         | SSE stream of `TaskEvent` records        |
+| POST   | `/task/:id/cancel`         | Cancel a queued or running task (v1.49)  |
 | GET    | `/tasks`                   | List tasks (optionally filtered by project) |
 
 The SSE event format is defined in `packages/shared/src/task-events.ts`. High-frequency events (`agent_stream`, `index_file`, `index_skip`) bypass the replay buffer; the rest are kept so late-joining SSE clients see context.

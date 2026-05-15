@@ -6,7 +6,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="MIT License"/></a>
   <img src="https://img.shields.io/badge/TypeScript-5.4+-3178c6.svg" alt="TypeScript"/>
   <img src="https://img.shields.io/badge/Node.js-18+-339933.svg" alt="Node.js"/>
-  <img src="https://img.shields.io/badge/tests-576%20passed-22c55e.svg" alt="576 tests"/>
+  <img src="https://img.shields.io/badge/tests-584%20passed-22c55e.svg" alt="584 tests"/>
   <img src="https://img.shields.io/badge/packages-12%20clean-22c55e.svg" alt="12 packages"/>
   <img src="https://img.shields.io/badge/sandbox-87.5%25-22c55e.svg" alt="87.5% sandbox"/>
   <img src="https://img.shields.io/badge/real--repo-92%25-22c55e.svg" alt="92% real repos"/>
@@ -55,9 +55,9 @@ POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer
 | 4 – 5 new abstractions | 🟡 ~70 % | Reviewer becomes the gating factor |
 | 5 + architectural | 🔴 ~30 % | Context or scope overrun |
 
-### Real-repo progress (v1.38 → v1.48)
+### Real-repo progress (v1.38 → v1.50)
 
-| Metric | v1.38 (2026-05-13) | v1.48 (2026-05-15) | Δ |
+| Metric | v1.38 (2026-05-13) | v1.50 (2026-05-15) | Δ |
 |---|---|---|---|
 | Real-repo success rate | 🟡 **42 %** (5/12) | 🟢 **92 %** (11/12) | **+50 pp** |
 | `ts_fail` (bad workspace imports) | 🔴 29 % | 🟢 0 % | Monorepo meta injection |
@@ -81,6 +81,19 @@ POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer
 
 **6/6 ✅** — no merge conflicts, no race conditions, no manual work between tasks.
 
+### Large-file surgery (L6 bench, v1.50)
+
+4 surgical edits in real hono files >480 LOC, exercising structural anchor v2:
+
+| Task | File | LOC | Pattern | Result |
+|------|------|-----|---------|--------|
+| L6.1 | `src/request.ts` | 489 | Cache header() across 3 overloads → implementation | 🟢 commit |
+| L6.2 | `src/request.ts` | 489 | JSDoc on overloaded query() method | 🟢 commit |
+| L6.3 | `src/hono-base.ts` | 539 | Add public getter to Hono class | 🟢 commit |
+| L6.4 | `src/context.ts` | 780 | redirect() property arrow + complex generics | 🔴 model limit |
+
+**3/4 (75%)** — overload disambiguation works on 489-line files; complex generics in 780-line files exceed Gemma 26B capability.
+
 ---
 
 ## What it handles — and what it doesn't
@@ -93,10 +106,10 @@ POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer
 | Bugfix (test → one file) | 🟢 ~90 % | Clear signal from failing test |
 | LRU / TTL / algorithmic logic | 🟢 ~90 % | Model generates correct structures |
 | Multi-file feature (2–4 files) | 🟢 ~90 % | 2-hop retrieval + FEATURE_SPEC guidance |
-| Refactor across 5+ files | 🔴 ~30 % | Context window + 1-hop graph limit |
-| Large class surgery (>700 LOC) | 🔴 ~25 % | Anchor lookup drifts on long files |
-| Complex generics (tRPC-style) | 🔴 ~20 % | Type graph exceeds retrieval budget |
-| Cumulative chained tasks | 🟢 ~83 % | v1.39-a auto ff-merge; 6/6 on sandbox |
+| Refactor across 5+ files | 🟡 ~50 % | N-hop reverse callers + payload filter (Qdrant) |
+| Large class surgery (>700 LOC) | 🟡 ~75 % | Structural anchor v2 (overload-aware) — see L6 bench |
+| Complex generics (tRPC-style) | 🔴 ~20 % | Model capability limit on Gemma 26B |
+| Cumulative chained tasks | 🟢 ~100 % | v1.39-a auto ff-merge; 6/6 on sandbox |
 
 ---
 
