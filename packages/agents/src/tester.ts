@@ -71,6 +71,17 @@ Rules:
     that needs it, or use afterEach to clean up via public API, so list-length
     assertions are not fragile. NEVER assert exact list length without controlling the
     full list state.
+13. ASYNC CALLBACKS: Any lifecycle hook that uses await MUST be declared async.
+    CORRECT: beforeEach(async () => { const x = await something(); });
+    WRONG:   beforeEach(() => { /* using await here is a SyntaxError */ });
+    This applies to beforeEach, afterEach, beforeAll, afterAll, and it/test blocks.
+14. STATIC IMPORTS ONLY: Import the module under test once at the top of the file with
+    a static import — never use dynamic import() inside beforeEach or any lifecycle
+    hook to "re-import after mocking". vi.mock() is automatically hoisted before all
+    imports, so static imports already see the mock. Dynamic import() inside beforeEach
+    is unreliable and causes async complexity.
+    CORRECT: import { myFunction } from '../utils/myModule.js'; (top of file)
+    WRONG:   beforeEach(async () => { const m = await import('../utils/myModule'); });
 
 Output ONLY valid JSON:
 { "testFiles": [{ "path": "src/__tests__/foo.test.ts", "content": "...", "action": "create" }] }`;

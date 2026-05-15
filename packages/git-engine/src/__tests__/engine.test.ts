@@ -23,6 +23,7 @@ interface GitSpy {
   checkoutLocalBranch: ReturnType<typeof vi.fn>;
   branch: ReturnType<typeof vi.fn>;
   merge: ReturnType<typeof vi.fn>;
+  clean: ReturnType<typeof vi.fn>;
 }
 
 let gitSpy: GitSpy;
@@ -39,6 +40,7 @@ function makeGitSpy(overrides: Partial<GitSpy> = {}): GitSpy {
     checkoutLocalBranch: vi.fn().mockResolvedValue(undefined),
     branch: vi.fn().mockResolvedValue({ all: [] }),
     merge: vi.fn().mockResolvedValue(undefined),
+    clean: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -57,7 +59,8 @@ describe('GitEngine — cumulative mode (v1.39-a)', () => {
     const branch = await engine.createBranchForTask('t1');
 
     expect(branch).toMatch(/^auto\/task-t1-\d+$/);
-    expect(gitSpy.checkout).toHaveBeenCalledWith('main');
+    expect(gitSpy.checkout).toHaveBeenCalledWith(['-f', 'main']);
+    expect(gitSpy.clean).toHaveBeenCalledWith('f', ['-d']);
     // No branch lookup or auto-creation should happen in non-cumulative mode.
     expect(gitSpy.branch).not.toHaveBeenCalled();
     expect(gitSpy.checkoutLocalBranch).toHaveBeenCalledWith(branch);
@@ -94,7 +97,7 @@ describe('GitEngine — cumulative mode (v1.39-a)', () => {
     // Only the task branch is created locally — cumulative is just checked out.
     const localBranchCalls = gitSpy.checkoutLocalBranch.mock.calls.map(c => c[0]);
     expect(localBranchCalls).toEqual([branch]);
-    expect(gitSpy.checkout).toHaveBeenCalledWith('auto/cumulative');
+    expect(gitSpy.checkout).toHaveBeenCalledWith(['-f', 'auto/cumulative']);
   });
 
   it('mergeIntoCumulative ff-merges and returns void on success', async () => {

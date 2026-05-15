@@ -41,13 +41,22 @@ export class GitEngine {
     logger.info({ branchName }, 'Creating git branch');
 
     const base = await this.resolveBaseBranch();
+
+    // Discard any uncommitted tracked changes and untracked files left over from a
+    // previous commit_skipped task. Without this, tasks that fail validation leave
+    // dirty state in the working tree which pollutes subsequent tasks' baseline.
     try {
-      await this.git.checkout(base);
+      await this.git.checkout(['-f', base]);
     } catch {
       const fallback = base === 'main' ? 'master' : 'main';
-      try { await this.git.checkout(fallback); } catch {
+      try { await this.git.checkout(['-f', fallback]); } catch {
         logger.warn({ base }, 'Base branch not found. Staying on current branch.');
       }
+    }
+    try {
+      await this.git.clean('f', ['-d']);
+    } catch (e: any) {
+      logger.warn({ error: e.message }, 'git clean failed — continuing anyway');
     }
 
     try {
