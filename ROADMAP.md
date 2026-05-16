@@ -4,7 +4,7 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.57 done (2026-05-16). Reviewer isolation fix — V1 vite JSDoc коммитит после 3 sandbox задач ✅. Vite full-queue улучшен. Side: vite pre-commit hook (oxfmt) ломает V2 commit. L6: 3/4. 591 тестов. Сессия завершена.
+**Статус:** 🟢 v1.58 done (2026-05-17). Pre-commit hook retry (formatter) + TesterAgent rule 15 (ESM only). Reviewer isolation v1.57 ✅. V2 vite: eslint в pre-commit ловит unused import + require() — код качества, не инфра. L6: 3/4. 595 тестов.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.

@@ -13,6 +13,14 @@
 
 ---
 
+## v1.58 — Pre-commit hook retry + TesterAgent ESM-only rule (2026-05-17)
+
+`commitChanges` now detects when a pre-commit hook reformats staged files (formatter hooks: prettier, oxfmt, etc.) by checking for modified tracked files after a commit failure, then re-stages and retries once. Handles the common lint-staged pattern where the formatter modifies files but leaves them unstaged.
+
+TesterAgent rule 15: never use `require()` — ESM import syntax only. Fixes generated test files using CommonJS `require()` in ESM-first projects (caught by eslint in vite's pre-commit hook: `no-restricted-globals`). +4 unit tests for hook retry scenarios. **595/595 tests.**
+
+---
+
 ## v1.57 — Reviewer isolation: anchor prompt + grounding rule (2026-05-16)
 
 Two changes to prevent semantic bleed when tasks from different projects run sequentially in the same queue. Reviewer prompt now includes a CRITICAL grounding rule: "evaluate ONLY the files and step provided, ignore prior context." User prompt prefixed with `[Reviewing changes in: path1, path2, ...]` as an explicit file-path anchor before the step description.
