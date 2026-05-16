@@ -776,6 +776,25 @@ export function dispatchToolCall(
       );
     }
     case 'done': {
+      // Pre-flight: catch duplicate top-level exports/functions before the
+      // changes reach the validator. Covers the case where Coder calls both
+      // add_export and replace_in_file on the same symbol in one step.
+      const dupErrors: string[] = [];
+      for (const [path, content] of ws.modifiedEntries()) {
+        const seen = new Map<string, number>();
+        for (const m of content.matchAll(/^export\s+(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)/gm)) {
+          seen.set(m[1], (seen.get(m[1]) ?? 0) + 1);
+        }
+        for (const [name, count] of seen) {
+          if (count > 1) dupErrors.push(`${path}: '${name}' defined ${count} times`);
+        }
+      }
+      if (dupErrors.length > 0) {
+        return {
+          text: `error: duplicate top-level exports detected — remove the extra definitions before calling done():\n${dupErrors.join('\n')}`,
+          done: false,
+        };
+      }
       return { text: 'ok: changes finalized', done: true };
     }
     default:

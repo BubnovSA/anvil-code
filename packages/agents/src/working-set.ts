@@ -124,6 +124,17 @@ export class WorkingSet {
    * cleanly (a backup is taken first), and tool-calling Coder doesn't emit
    * search/replace blocks so the patch-based modify path doesn't apply here.
    */
+  /** Iterate [relPath, content] for every file that was modified or created. */
+  modifiedEntries(): IterableIterator<[string, string]> {
+    const result: [string, string][] = [];
+    for (const [relPath, state] of this.files) {
+      if (state.action !== 'untouched' && state.action !== 'delete') {
+        result.push([relPath, state.content]);
+      }
+    }
+    return result[Symbol.iterator]();
+  }
+
   toFileChanges(): FileChange[] {
     const changes: FileChange[] = [];
     for (const [relPath, state] of this.files) {
