@@ -13,6 +13,16 @@
 
 ---
 
+## v1.57 — Reviewer isolation: anchor prompt + grounding rule (2026-05-16)
+
+Two changes to prevent semantic bleed when tasks from different projects run sequentially in the same queue. Reviewer prompt now includes a CRITICAL grounding rule: "evaluate ONLY the files and step provided, ignore prior context." User prompt prefixed with `[Reviewing changes in: path1, path2, ...]` as an explicit file-path anchor before the step description.
+
+**Validation:** V1 (JSDoc on vite defineConfig) now commits after 3 sandbox tasks (was rejected with "User type" hallucination before fix). **591/591 tests.**
+
+**Side finding:** vite's pre-commit hook (lint-staged + oxfmt) rewrites new TypeScript files on commit, leaving unstaged diff → commit fails. Affects V2 (getViteVersion.ts). Separate bug, not Reviewer-related.
+
+---
+
 ## v1.56 — add_export duplicate guard + done() pre-flight check (2026-05-16)
 
 `locateAddExport` now checks if a top-level symbol with the same name already exists before inserting. `done()` handler scans all modified files for duplicate top-level exports before finalising — catches cases where Coder uses both `add_export` and `replace_in_file` on the same symbol in one step. `WorkingSet.modifiedEntries()` added to support the scan.
