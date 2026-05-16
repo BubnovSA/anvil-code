@@ -24,6 +24,9 @@ interface GitSpy {
   branch: ReturnType<typeof vi.fn>;
   merge: ReturnType<typeof vi.fn>;
   clean: ReturnType<typeof vi.fn>;
+  add: ReturnType<typeof vi.fn>;
+  commit: ReturnType<typeof vi.fn>;
+  status: ReturnType<typeof vi.fn>;
 }
 
 let gitSpy: GitSpy;
@@ -41,6 +44,9 @@ function makeGitSpy(overrides: Partial<GitSpy> = {}): GitSpy {
     branch: vi.fn().mockResolvedValue({ all: [] }),
     merge: vi.fn().mockResolvedValue(undefined),
     clean: vi.fn().mockResolvedValue(undefined),
+    add: vi.fn().mockResolvedValue(undefined),
+    commit: vi.fn().mockResolvedValue({ commit: 'abc123' }),
+    status: vi.fn().mockResolvedValue({ modified: [] }),
     ...overrides,
   };
 }
@@ -121,5 +127,55 @@ describe('GitEngine — cumulative mode (v1.39-a)', () => {
     await expect(engine.mergeIntoCumulative('auto/task-x-123')).rejects.toThrow(
       /Cumulative ff-merge of auto\/task-x-123 failed/,
     );
+  });
+});
+
+describe('GitEngine — commitChanges pre-commit hook retry (v1.58)', () => {
+  beforeEach(() => {
+    mockConfig.git.cumulative.enabled = false;
+    mockConfig.git.defaultBranch = 'main';
+  });
+
+  it('commits successfully on first attempt', async () => {
+    gitSpy = makeGitSpy();
+    const engine = new GitEngine('/tmp');
+    const hash = await engine.commitChanges('t1', 'test commit', ['src/foo.ts']);
+    expect(hash).toBe('abc123');
+    expect(gitSpy.add).toHaveBeenCalledWith(['src/foo.ts']);
+    expect(gitSpy.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-stages and retries when pre-commit hook reformats files', async () => {
+    gitSpy = makeGitSpy({
+      commit: vi.fn()
+        .mockRejectedValueOnce(new Error('hook exited with code 1'))
+        .mockResolvedValueOnce({ commit: 'def456' }),
+      status: vi.fn().mockResolvedValue({ modified: ['src/foo.ts'] }),
+    });
+    const engine = new GitEngine('/tmp');
+    const hash = await engine.commitChanges('t1', 'test', ['src/foo.ts']);
+    expect(hash).toBe('def456');
+    expect(gitSpy.add).toHaveBeenCalledTimes(2);
+    expect(gitSpy.commit).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws if no modified files after first commit failure (real error)', async () => {
+    gitSpy = makeGitSpy({
+      commit: vi.fn().mockRejectedValue(new Error('nothing to commit')),
+      status: vi.fn().mockResolvedValue({ modified: [] }),
+    });
+    const engine = new GitEngine('/tmp');
+    await expect(engine.commitChanges('t1', 'test', ['src/foo.ts'])).rejects.toThrow('nothing to commit');
+    expect(gitSpy.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws if retry also fails', async () => {
+    gitSpy = makeGitSpy({
+      commit: vi.fn().mockRejectedValue(new Error('hook failed')),
+      status: vi.fn().mockResolvedValue({ modified: ['src/foo.ts'] }),
+    });
+    const engine = new GitEngine('/tmp');
+    await expect(engine.commitChanges('t1', 'test', ['src/foo.ts'])).rejects.toThrow('hook failed');
+    expect(gitSpy.commit).toHaveBeenCalledTimes(2);
   });
 });

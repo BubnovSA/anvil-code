@@ -85,16 +85,41 @@ export class GitEngine {
   }
 
   async commitChanges(taskId: string, message: string, files: string[]): Promise<string> {
+    logger.debug({ files }, 'Staging files for commit');
+    await this.git.add(files);
     try {
-      logger.debug({ files }, 'Staging files for commit');
-      await this.git.add(files);
       const commitResult = await this.git.commit(`[Auto-${taskId}] ${message}`);
-      
       logger.info({ commitHash: commitResult.commit }, 'Committed changes');
       return commitResult.commit;
     } catch (e: any) {
-      logger.error({ error: e.message }, 'Failed to commit changes');
-      throw e;
+      // Pre-commit hooks (e.g. lint-staged + prettier/oxfmt) may reformat staged
+      // files and leave them unstaged, causing the commit to fail. Detect this by
+      // checking for modified tracked files after the failure, then re-stage and
+      // retry once so the formatted version is what gets committed.
+      logger.warn({ error: e.message }, 'Commit failed — checking for hook-reformatted files');
+      let modified: string[] = [];
+      try {
+        const status = await this.git.status();
+        modified = status.modified;
+      } catch {
+        // status failed — rethrow original error
+        logger.error({ error: e.message }, 'Failed to commit changes');
+        throw e;
+      }
+      if (modified.length === 0) {
+        logger.error({ error: e.message }, 'Failed to commit changes');
+        throw e;
+      }
+      logger.info({ modified }, 'Pre-commit hook reformatted files — re-staging and retrying');
+      try {
+        await this.git.add(files);
+        const commitResult = await this.git.commit(`[Auto-${taskId}] ${message}`);
+        logger.info({ commitHash: commitResult.commit }, 'Committed changes (after hook re-stage)');
+        return commitResult.commit;
+      } catch (retryErr: any) {
+        logger.error({ error: retryErr.message }, 'Commit retry also failed after hook re-stage');
+        throw retryErr;
+      }
     }
   }
 
