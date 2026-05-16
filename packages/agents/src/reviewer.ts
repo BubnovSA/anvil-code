@@ -14,6 +14,10 @@ export class ReviewerAgent extends BaseAgent {
   role: ModelRole = 'reviewer';
   systemPrompt = `You are a Code Reviewer. Approve or reject code changes based on BLOCKING issues only.
 
+CRITICAL: Base your review SOLELY on the files and step description provided below. Do NOT apply
+requirements, types, or conventions from other projects, codebases, or frameworks you may have
+seen before. Each review is independent — ignore any prior context.
+
 APPROVE (isApproved: true) when the code:
 - Correctly implements what the step description asks for
 - Does not introduce obvious runtime bugs (null dereference, wrong condition, broken logic)
@@ -36,7 +40,9 @@ Output ONLY valid JSON: { "isApproved": true|false, "issues": ["blocking issue"]
 
   async execute(stepDescription: string, files: FileChange[], context: string, taskMode: TaskMode): Promise<ReviewerOutput> {
     const filesSummary = files.map(formatChangeForReview).join('\n---\n');
-    const prompt = `Step: ${stepDescription}\n\nFiles:\n${filesSummary}\n\nContext:\n${context}\n\nProvide review JSON.`;
+    const filePaths = files.map(f => f.path).slice(0, 5).join(', ');
+    const anchor = `[Reviewing changes in: ${filePaths}${files.length > 5 ? ` and ${files.length - 5} more` : ''}]`;
+    const prompt = `${anchor}\nStep: ${stepDescription}\n\nFiles:\n${filesSummary}\n\nContext:\n${context}\n\nProvide review JSON.`;
     const response = await this.callLLM(prompt, taskMode, true);
     return this.parseAndValidate(response, ReviewerOutputSchema);
   }
