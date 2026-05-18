@@ -168,6 +168,43 @@ Fail patterns, sorted by frequency in real-repo runs:
 
 ---
 
+## Model speed — RTX 3090 24 GB (2026-05-18)
+
+Hardware: i7-10700, RTX 3090 24 GB VRAM, 80 GB DDR4 RAM, llama-swap proxy.
+
+### Q6_K_L 32B — ngl sweep (16K ctx, q8_0 KV vs q4_0 KV)
+
+Goal: find the fastest config for Qwen2.5-Coder-32B-Instruct-Q6_K_L within 24 GB VRAM.
+
+| Config | ngl | KV cache | flash-attn | tok/s (gen) | Status |
+|---|---|---|---|---|---|
+| baseline | 54 | q8_0 | ON | **5.37** | ✅ stable |
+| no-flash-attn | 54 | q8_0 | OFF | 5.36 | ✅ same speed |
+| no-flash-attn | 55–64 | q8_0 | OFF | — | ❌ OOM at startup |
+| q4_0 KV | 55 | q4_0 | ON | **5.84** | ✅ +7.5% |
+| q4_0 KV | **56** | q4_0 | ON | **6.28** | ✅ **+15.6%** ← new best |
+| q4_0 KV | 57–60 | q4_0 | ON | — | ❌ OOM at startup |
+
+**Findings:**
+- `--flash-attn` removal: no effect on OOM threshold or speed. FA2 workspace ≈ 0.3 GB — smaller than one transformer layer (~390 MB), not the bottleneck.
+- `--mlock` removal: analytically no VRAM impact (only locks CPU RAM pages). Not tested separately.
+- **q4_0 KV saves ~1 GB** → allows 2 more GPU layers (54→56) → +15.6% gen speed.
+- Hard ceiling: ngl=56 at 16K q4_0 KV. Weight budget ~22.4 GB + KV ~1 GB + overhead ≈ 24 GB.
+- CPU bottleneck for ngl=54: 10 CPU layers × ~390 MB / DDR4 ~45 GB/s ≈ 87 ms/token.
+
+**New production config for Q6K_L:** `ngl=56, q4_0 KV, 16K ctx` — alias `ngl56-q4kv`.
+
+### Qwen3-35B MoE (UD-Q4_K_M, 32K ctx, q4_0 KV)
+
+| Context | tok/s (gen) | Notes |
+|---|---|---|
+| Short (~30 tokens) | ~117 tok/s | MoE 3B active params, trivial attention |
+| Real agent runs (~25K RAG context) | **~11 tok/s** | Attention over large KV dominates |
+
+MoE active-parameter advantage evaporates at large context due to KV cache attention cost.
+
+---
+
 ## What works well
 
 - **Sandbox-quality TypeScript** — when the task fits the context, the generated code is genuinely idiomatic. Generic constraints, async cleanup, hooks, middleware patterns all come out clean.

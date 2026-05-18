@@ -5,6 +5,21 @@
 
 ---
 
+## hardware-bench — Q6K_L ngl sweep on RTX 3090 (2026-05-18)
+
+Hardware-only experiment: find the fastest llama-swap config for Qwen2.5-Coder-32B-Instruct-Q6_K_L within 24 GB VRAM.
+
+**Finding 1 — flash-attn is not the OOM culprit.** Removing `--flash-attn on` from `base_flags` did not allow higher ngl values. FA2 workspace (~0.3 GB) is smaller than one transformer layer (~390 MB), so it cannot explain the ngl=55 crash.
+
+**Finding 2 — q4_0 KV saves enough to unlock 2 more GPU layers.** Switching KV cache from q8_0 to q4_0 frees ~1 GB → ngl=56 fits, ngl=57 still crashes. Results (3-run averages):
+- ngl=54, q8_0 KV (baseline): **5.43 tok/s**
+- ngl=55, q4_0 KV: **5.84 tok/s** (+7.5%)
+- ngl=56, q4_0 KV: **6.28 tok/s** (+15.6%) ← new best
+
+**Action:** llama-swap config on server updated — alias `ngl56-q4kv` is the new Q6K_L production profile. Full results in [BENCHMARK.md](BENCHMARK.md#model-speed--rtx-3090-24-gb-2026-05-18).
+
+---
+
 ## v1.40 — TesterAgent post-generation TS validation (2026-05-14)
 
 **Root cause (v1.39 bench):** TesterAgent-generated test files bypassed TypeScript checking entirely — `isTestPath` filter in the pre-Reviewer TS check excluded them. `body is not defined` (L1.1 r2) and stale-list assertion (L4.1 r1) reached validation and blocked commits on correct production changes.

@@ -5,12 +5,13 @@
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
 **Статус:** 🟢 v1.61 done (2026-05-18). Qwen3-35B MoE 32K — **11 tok/s**, sandbox **7/7 ✅ (рекорд)**, vite **3/4** (V1+V5+V6 ✅). L3.1 (class refactor) теперь проходит с thinking mode. V1 (config.ts 2728 строк) коммитит. 588 тестов.
+**Hardware bench (2026-05-18):** Q6K_L 32B sweet spot найден — `ngl=56, q4_0 KV, 16K ctx` → **6.28 tok/s** (+15.6% vs baseline 5.37). `--flash-attn` / `--mlock` не влияют на OOM порог.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.
 **Backend:** llama-swap (local endpoint, see `.env`), tool-calling Coder/Fixer дефолт.
 **Тесты:** 589/589 unit-tests (+ 3 pre-existing ASTParser native failures), 12/12 пакетов чисто.
-**Последнее обновление:** 2026-05-16.
+**Последнее обновление:** 2026-05-18.
 
 ---
 
