@@ -53,6 +53,8 @@ export class Orchestrator {
   private conventions: ProjectConventions | null = null;
   /** Fingerprints of pre-existing tsc/test failures on clean repo state. */
   private baselineFailures: Set<string> | null = null;
+  /** Cached result of reading "type":"module" from root package.json. */
+  private esmProject: boolean | null = null;
 
   constructor(
     private router: ModelRouter,
@@ -79,6 +81,31 @@ export class Orchestrator {
       this.conventions = readProjectConventions(this.writer.root);
     }
     return this.conventions;
+  }
+
+  private getIsEsmProject(): boolean {
+    if (this.esmProject === null) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(this.writer.root, 'package.json'), 'utf8'));
+        this.esmProject = pkg.type === 'module';
+      } catch {
+        this.esmProject = false;
+      }
+    }
+    return this.esmProject;
+  }
+
+  /** Returns paths of production (non-test) FileChanges that introduce require() in an ESM project. */
+  private detectEsmProductionViolators(changes: FileChange[]): string[] {
+    const CJS = /\brequire\s*\(|\b__dirname\b|\b__filename\b/;
+    return changes
+      .filter(c => c.action !== 'delete' && !isTestPath(c.path))
+      .filter(c => {
+        if (c.action === 'create') return CJS.test(c.content);
+        if (c.action === 'modify') return c.edits.some(e => CJS.test(e.replace));
+        return false;
+      })
+      .map(c => c.path);
   }
 
   /**
@@ -720,6 +747,37 @@ export class Orchestrator {
       log.info({ stepId: step.id, files: currentChanges.length }, 'Noop retry produced file changes');
     }
 
+    // ESM production guard: in ESM projects ("type":"module"), require() in
+    // production code crashes at runtime. Detect before Tester/Reviewer and
+    // retry once with an explicit nudge so the model can fix import syntax in
+    // the same step. Cap at 1 retry — if still violated, validation + Fixer handle it.
+    if (this.getIsEsmProject()) {
+      const esmViolators = this.detectEsmProductionViolators(currentChanges);
+      if (esmViolators.length > 0) {
+        log.warn({ stepId: step.id, files: esmViolators }, 'ESM violation in production files — retrying with nudge');
+        const esmNudge =
+          `CRITICAL ESM VIOLATION: This project uses ES Modules ("type":"module" in package.json). ` +
+          `The following production files contain CommonJS require() calls that will CRASH at runtime:\n` +
+          esmViolators.map(f => `  - ${f}`).join('\n') +
+          `\n\nYou MUST replace every require() with ES Module import syntax. Example:\n` +
+          `  // WRONG:  const { readFileSync } = require('fs')\n` +
+          `  // CORRECT: import { readFileSync } from 'fs'\n` +
+          `Re-read each violating file and fix the imports before calling done().`;
+        const esmRetryResult = config.agents.toolCallingCoder
+          ? await runTaskAgent(
+              pickSpec(stepKind),
+              { stepDescription: step.description, context: `${promptContext}\n\n${esmNudge}`, taskMode: mode, ragReadOnlyPaths: ragFilePaths },
+              this.router,
+              this.writer.root,
+            )
+          : await this.coder.execute(step.description, `${promptContext}\n\n${esmNudge}`, mode, onCoderFile);
+        if (esmRetryResult.files.length > 0) {
+          currentChanges = [...esmRetryResult.files];
+          log.info({ stepId: step.id, files: currentChanges.length }, 'ESM retry produced file changes');
+        }
+      }
+    }
+
     // v1.32-c: skip Tester for refactor kinds. Refactor preserves behavior
     // — existing tests are the regression gate; generating new ones is wasted
     // work and risks regression-test drift.
@@ -1045,12 +1103,6 @@ export class Orchestrator {
     // ESM guard (Rule 15): in ESM-first projects ("type":"module" in package.json),
     // discard test files that use CommonJS-only globals (require, __dirname, __filename).
     // These pass tsc (via @types/node) but fail eslint no-restricted-globals at commit.
-    const isEsmProject = (() => {
-      try {
-        const pkg = JSON.parse(fs.readFileSync(path.join(this.writer.root, 'package.json'), 'utf8'));
-        return pkg.type === 'module';
-      } catch { return false; }
-    })();
     const hasCommonJsGlobals = (content: string) =>
       /\brequire\s*\(|\b__dirname\b|\b__filename\b/.test(content);
 
@@ -1060,7 +1112,7 @@ export class Orchestrator {
         logger.warn({ path: f.path }, 'TesterAgent: discarding test file with no it()/test() calls');
         return false;
       }
-      if (isEsmProject && hasCommonJsGlobals(content)) {
+      if (this.getIsEsmProject() && hasCommonJsGlobals(content)) {
         logger.warn({ path: f.path }, 'TesterAgent: discarding test file with CommonJS globals (require/__dirname) in ESM project');
         return false;
       }

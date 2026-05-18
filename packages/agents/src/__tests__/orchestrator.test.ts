@@ -1157,3 +1157,80 @@ describe('mergeFixerChanges — Fixer output merge semantics', () => {
     expect(merged).toEqual(fixer);
   });
 });
+
+// ---------------------------------------------------------------------------
+// detectEsmProductionViolators — unit tests (v1.62)
+// ---------------------------------------------------------------------------
+
+describe('detectEsmProductionViolators', () => {
+  type DetectFn = (changes: unknown[]) => string[];
+
+  function makeOrch() {
+    const orch = new Orchestrator({} as never, {} as never, { root: '/tmp' } as never, {} as never, {} as never);
+    // Force ESM mode (bypass fs.readFileSync for package.json).
+    (orch as unknown as { esmProject: boolean }).esmProject = true;
+    const detect = (orch as unknown as { detectEsmProductionViolators: DetectFn }).detectEsmProductionViolators.bind(orch);
+    return detect;
+  }
+
+  it('flags create action with require() in production file', () => {
+    const detect = makeOrch();
+    const result = detect([
+      { action: 'create', path: 'src/utils.ts', content: "const x = require('fs')" },
+    ]);
+    expect(result).toEqual(['src/utils.ts']);
+  });
+
+  it('flags modify action whose replace text contains require()', () => {
+    const detect = makeOrch();
+    const result = detect([
+      { action: 'modify', path: 'src/helper.ts', edits: [{ search: 'old', replace: "const v = require('path').join('a', 'b')" }] },
+    ]);
+    expect(result).toEqual(['src/helper.ts']);
+  });
+
+  it('flags __dirname in create action', () => {
+    const detect = makeOrch();
+    const result = detect([
+      { action: 'create', path: 'src/loader.ts', content: 'const dir = __dirname' },
+    ]);
+    expect(result).toEqual(['src/loader.ts']);
+  });
+
+  it('does not flag test files (isTestPath)', () => {
+    const detect = makeOrch();
+    const result = detect([
+      { action: 'create', path: 'src/__tests__/loader.test.ts', content: "const x = require('fs')" },
+    ]);
+    expect(result).toEqual([]);
+  });
+
+  it('does not flag delete actions', () => {
+    const detect = makeOrch();
+    const result = detect([{ action: 'delete', path: 'src/old.ts' }]);
+    expect(result).toEqual([]);
+  });
+
+  it('does not flag clean ESM import syntax', () => {
+    const detect = makeOrch();
+    const result = detect([
+      { action: 'create', path: 'src/clean.ts', content: "import { readFileSync } from 'fs'" },
+    ]);
+    expect(result).toEqual([]);
+  });
+
+  it('handles modify with multiple edits — only flags when at least one replace has require()', () => {
+    const detect = makeOrch();
+    const result = detect([
+      {
+        action: 'modify',
+        path: 'src/mixed.ts',
+        edits: [
+          { search: 'a', replace: 'import x from "x"' },
+          { search: 'b', replace: "const y = require('y')" },
+        ],
+      },
+    ]);
+    expect(result).toEqual(['src/mixed.ts']);
+  });
+});
