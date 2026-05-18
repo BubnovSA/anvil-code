@@ -16,7 +16,7 @@ Sandbox numbers measure code-generation ceiling. Real-repo numbers measure opera
 Additional bench categories (v1.39+):
 - **Cumulative mode** (sequential tasks accumulating in `auto/cumulative`): **6/6** on sandbox.
 - **L6 large-file surgery** (overload disambiguation, property arrows): **3/4** on hono files >480 LOC.
-- **Cross-repo** (new repo without training exposure): zod **4/4** after v1.51 extension detection; vite 0/6 (needs `pnpm build` pre-flight).
+- **Cross-repo** (new repo without training exposure): zod **4/4** after v1.51 extension detection; vite **6/6 ✅** (v1.63, Qwen3-35B MoE — all tasks including 1835-line file modification and large-file navigation).
 
 **API pre-flight workflow** (v1.52): `GET /project/:id/healthcheck` returns `{ready, tscOk, testsOk, issues[]}` — verify environment before bench.
 

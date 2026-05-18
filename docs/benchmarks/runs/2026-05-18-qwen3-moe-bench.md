@@ -32,10 +32,11 @@
 | V1 — JSDoc on defineConfig (config.ts 2728 lines) | ✅ | **New!** Was model-ceiling for all dense models |
 | V2 — getViteVersion new file | ✅ **committed `2b240b42`** | **v1.62 ESM guard fired** — retry produced `fileURLToPath(import.meta.url)` |
 | V3 — parseAcceptHeader (utils.ts 1835 lines, modify) | ✅ **committed `386eb921`** | **v1.63 read_file offset** — Qwen3 navigated to line 1800, used add_export, 29 lines added 0 deleted |
+| V4 — requestLogger middleware (new file + registration) | ✅ **committed `7eb1e1f5`** | read_file start_line=920 found registration area; server.config.logger used correctly |
 | V5 — HMR_HEADER_NAME constant | ✅ | Consistent |
 | V6 — createServer JSDoc (re-export chain) | ✅ | Was Gemma noop, now ✅ |
 
-**Vite total: 5/5 ✅** (V1+V2+V3+V5+V6 — all pass with Qwen3 MoE + v1.63).
+**Vite total: 6/6 ✅** (V1+V2+V3+V4+V5+V6 — all pass with Qwen3 MoE + v1.63).
 
 ### V2 post-v1.62 detail
 
