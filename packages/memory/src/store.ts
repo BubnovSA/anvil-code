@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { config, logger } from '@rag-system/shared';
 import path from 'path';
 import fs from 'fs';
-import type { TaskRecord, ADRRecord, FailureRecord } from './types.js';
+import type { TaskRecord, ADRRecord, FailureRecord, RepoPatternRecord } from './types.js';
 
 export class MemoryStore {
   private db: Database.Database;
@@ -49,6 +49,11 @@ export class MemoryStore {
         cache_key TEXT PRIMARY KEY,
         vector TEXT NOT NULL,
         created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS repo_patterns (
+        id TEXT PRIMARY KEY,
+        issue TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now'))
       );
     `);
   }
@@ -133,6 +138,21 @@ export class MemoryStore {
 
   getFailurePatterns(limit = 10): FailureRecord[] {
     return this.db.prepare('SELECT * FROM failures ORDER BY count DESC LIMIT ?').all(limit) as FailureRecord[];
+  }
+
+  saveRepoPattern(id: string, issue: string): void {
+    this.db.prepare(`
+      INSERT OR IGNORE INTO repo_patterns (id, issue) VALUES (?, ?)
+    `).run(id, issue.slice(0, 600));
+  }
+
+  getRepoPatterns(limit = 5): RepoPatternRecord[] {
+    return (this.db.prepare('SELECT * FROM repo_patterns ORDER BY created_at DESC LIMIT ?').all(limit) as Record<string, unknown>[])
+      .map(row => ({
+        id: row.id as string,
+        issue: row.issue as string,
+        createdAt: (row.created_at as string | null) ?? undefined,
+      }));
   }
 
   getFileHash(filePath: string): string | undefined {

@@ -22,6 +22,12 @@ export interface PromptContextInput {
    * so it doesn't hallucinate methods/files. Empty string is treated as absent.
    */
   repoMap?: string;
+  /**
+   * v1.64 — Validation errors that were auto-fixed by the Fixer in previous
+   * tasks on this project. Injected before conventions so Planner and Coder
+   * see repo-specific constraints (e.g. import path patterns) proactively.
+   */
+  repoPatterns?: string[];
 }
 
 const MAX_BYTES_PER_FILE = 3 * 1024;  // 3KB per file (~700 tokens) — was 8KB; large repos fill 32k ctx
@@ -41,6 +47,18 @@ export function buildPromptContext(input: PromptContextInput): string {
 
   const fullSources = readFullSources(onDiskPaths, input.projectRoot);
   const sections: string[] = [];
+
+  if (input.repoPatterns && input.repoPatterns.length > 0) {
+    const list = input.repoPatterns
+      .map((p, i) => `${i + 1}. ${p}`)
+      .join('\n');
+    sections.push(
+      `# Repo-specific patterns (learned from previous tasks)\n` +
+      `These validation errors were previously encountered and auto-fixed in this project. ` +
+      `They reveal repo-specific constraints — apply them proactively to avoid repeating the same mistakes:\n\n` +
+      list
+    );
+  }
 
   sections.push(`# Project Conventions\n${input.conventions.summary}`);
 

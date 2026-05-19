@@ -51,6 +51,8 @@ interface MockStore {
   saveTask: ReturnType<typeof vi.fn>;
   saveADR: ReturnType<typeof vi.fn>;
   saveFailure: ReturnType<typeof vi.fn>;
+  getRepoPatterns: ReturnType<typeof vi.fn>;
+  saveRepoPattern: ReturnType<typeof vi.fn>;
 }
 
 function buildOrchestrator(opts: {
@@ -63,6 +65,8 @@ function buildOrchestrator(opts: {
     saveTask: vi.fn(),
     saveADR: vi.fn(),
     saveFailure: vi.fn(),
+    getRepoPatterns: vi.fn().mockReturnValue([]),
+    saveRepoPattern: vi.fn(),
   };
 
   const router = {};

@@ -55,6 +55,8 @@ export class Orchestrator {
   private baselineFailures: Set<string> | null = null;
   /** Cached result of reading "type":"module" from root package.json. */
   private esmProject: boolean | null = null;
+  /** v1.64 — Validation errors auto-fixed in previous tasks; injected into Planner/Coder context. */
+  private repoPatterns: string[] = [];
 
   constructor(
     private router: ModelRouter,
@@ -132,6 +134,9 @@ export class Orchestrator {
     // 0. Compute baseline failures once on clean state (before any branch / file changes).
     await this.computeBaseline();
 
+    // v1.64 — load repo-specific patterns learned from previous tasks' Fixer fixes.
+    this.repoPatterns = this.store.getRepoPatterns().map(p => p.issue);
+
     // 1. Create Git Branch
     const branchName = await this.git.createBranchForTask(taskId);
 
@@ -155,6 +160,7 @@ export class Orchestrator {
       ragFilePaths: [],
       projectRoot: this.writer.root,
       repoMap,
+      repoPatterns: this.repoPatterns,
     });
 
     // 3. Plan — with 1 retry on parse failure (same rationale as Architect retry).
@@ -626,7 +632,7 @@ export class Orchestrator {
     if (stepKind === 'refactor') {
       design = { design: '' };
     } else {
-      const architectContext = buildPromptContext({ conventions, ragSnippets, ragFilePaths: [], projectRoot: this.writer.root, newlySources, repoMap });
+      const architectContext = buildPromptContext({ conventions, ragSnippets, ragFilePaths: [], projectRoot: this.writer.root, newlySources, repoMap, repoPatterns: this.repoPatterns });
       const isParseError = (e: unknown) =>
         e instanceof Error && e.message.startsWith('LLM output parsing failed');
       try {
@@ -664,6 +670,7 @@ export class Orchestrator {
       designContext: design.design,
       newlySources,
       repoMap,
+      repoPatterns: this.repoPatterns,
     });
     // Leaner variant for Reviewer/Tester that already see files inline in their own prompt.
     const reviewContext = buildPromptContext({
@@ -673,6 +680,7 @@ export class Orchestrator {
       projectRoot: this.writer.root,
       newlySources,
       repoMap,
+      repoPatterns: this.repoPatterns,
     });
     const onCoderFile = (file: PartialFile, index: number) => {
       taskEvents.emitEvent({
@@ -986,6 +994,7 @@ export class Orchestrator {
       ragFilePaths: failedChanges.map(c => c.path),
       projectRoot: this.writer.root,
       repoMap: this.renderRepoMap(failedChanges.map(c => c.path)),
+      repoPatterns: this.repoPatterns,
     });
 
     log.info(
@@ -1385,6 +1394,8 @@ export class Orchestrator {
     // pass validation, but `git.commit` would receive an empty/wrong file
     // list and produce no commit (observed live on L4.1 v1.32-a.1).
     const fixerWritten = new Set<string>();
+    // v1.64 — track issues from the previous attempt; if Fixer fixes them, save as repo patterns.
+    let prevIssues: string[] = [];
 
     taskEvents.emitEvent({ taskId, type: 'validation_start', message: 'Running typecheck + tests' });
 
@@ -1443,6 +1454,14 @@ export class Orchestrator {
       const issues = this.filterByBaseline(rawIssues);
 
       if (issues.length === 0) {
+        // v1.64 — if Fixer ran and fixed prior issues, save them as repo patterns
+        // so future tasks see them in context and avoid the same mistake.
+        if (prevIssues.length > 0) {
+          for (const issue of prevIssues) {
+            this.store.saveRepoPattern(`${taskId}-${attempt}-${Date.now()}`, issue);
+          }
+          log.info({ count: prevIssues.length }, 'Saved repo patterns from Fixer fix');
+        }
         log.info(
           {
             typeCheck: typeResult.skipped ?? 'passed',
@@ -1474,6 +1493,7 @@ export class Orchestrator {
         return { passed: false, issuesCount: issues.length, writtenFiles: [...fixerWritten] };
       }
 
+      prevIssues = issues;
       attempt++;
       log.warn({ attempt, issues: issues.length }, 'Validation failed, running Fixer');
 
@@ -1487,6 +1507,7 @@ export class Orchestrator {
         ragFilePaths: allFileChanges.map(c => c.path),
         projectRoot: this.writer.root,
         repoMap: this.renderRepoMap(allFileChanges.map(c => c.path)),
+        repoPatterns: this.repoPatterns,
       });
       // v1.30.3 — when tool-calling Coder is on, also use tool-calling Fixer.
       // Patch-based Fixer hallucinates `search` blocks at scale (v1.29 / v1.30.1

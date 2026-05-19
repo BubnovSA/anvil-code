@@ -23,3 +23,9 @@ export interface FailureRecord {
   resolution?: string;
   lastSeenAt?: string;
 }
+
+export interface RepoPatternRecord {
+  id: string;
+  issue: string;
+  createdAt?: string;
+}
