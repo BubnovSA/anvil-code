@@ -1,6 +1,6 @@
 # Benchmark
 
-Quantitative track record of the RAG System on TypeScript codebases. Methodology is reproducible; raw run files live in [docs/benchmarks/runs/](docs/benchmarks/runs/) — one file per iteration so regressions show up in `git diff`.
+Quantitative track record of Anvil-Code on TypeScript codebases. Methodology is reproducible; raw run files live in [docs/benchmarks/runs/](docs/benchmarks/runs/) — one file per iteration so regressions show up in `git diff`.
 
 ## TL;DR
 
@@ -8,10 +8,10 @@ Quantitative track record of the RAG System on TypeScript codebases. Methodology
 |-----------------------|----------------|-------|---------|--------------------------------|
 | `rag-system-sandbox`  | 30 TS files    | 16    | **87.5 %** (14/16) | Curated suite L1–L5, all categories |
 | `honojs/hono`         | 366 TS files   | 6     | **100 %** (6/6, v1.47 Gemma + v1.65d Qwen3 with correct prompts) | H4 bench setup error fixed; real capability 6/6 |
-| `trpc/trpc`           | 907 TS files   | 6     | **67 %** (4/6, v1.43 Gemma best) | pnpm monorepo, project refs; Qwen3 MoE: 2/6 (33%) — model variance |
-| **Combined real-repo** | | **12** | **92 % (11/12)** | v1.43 peak; 83–92% across runs |
+| `trpc/trpc`           | 907 TS files   | 6     | **83 %** (5/6, Gemma v1.43 + Qwen3 v1.65d) | pnpm monorepo, project refs; T3 fail due to thinking-mode over-refactor |
+| **Combined real-repo** | | **12** | **92 % (11/12)** | v1.65d current; v1.43 first reached this peak |
 
-Sandbox numbers measure code-generation ceiling. Real-repo numbers measure operational ceiling. Combined **42 % → 92 %** improvement from v1.38 → v1.50. Remaining failures: model variance on complex trpc internals (T2/T3/T5) and noop on 900-line dataLoader (T6); Qwen3 thinking mode causes over-refactoring on T3.
+Sandbox numbers measure code-generation ceiling. Real-repo numbers measure operational ceiling. Combined **42 % → 92 %** improvement from v1.38 → v1.65d (peak first reached at v1.43, sustained through v1.65d on both Gemma and Qwen3 MoE). Remaining failures: thinking-mode over-refactor on complex trpc internals (T3); rare model variance on T2/T5.
 
 Additional bench categories (v1.39+):
 - **Cumulative mode** (sequential tasks accumulating in `auto/cumulative`): **6/6** on sandbox.
@@ -150,6 +150,31 @@ Commits (representative):
 | trpc   | `getErrorCode` helper                     | 1     | committed              |
 
 Failures clustered on multi-file tasks that exceed even the tightened context budget.
+
+### v1.38 → v1.65d — climbing to 92 %
+
+Each row below is the single change that moved the headline metric, not the full changelog (full log in [CHANGELOG.md](CHANGELOG.md)).
+
+| Version | Date       | Key change                                          | Effect                                            |
+|---------|------------|-----------------------------------------------------|---------------------------------------------------|
+| v1.39-a | 2026-05-14 | Cumulative branch + ff-merge + `NoopStepError`     | Cumulative chain stable; noop is a distinct fail   |
+| v1.39-b | 2026-05-14 | `VALIDATION_TIMEOUT_MS` guard                       | `validation_incomplete` cohort → 0                |
+| v1.39-c | 2026-05-14 | Reviewer-reject dispatch to tool-calling Fixer      | `reviewer_reject` on T6 / H4 closed               |
+| v1.40   | 2026-05-14 | TesterAgent post-gen TS validation + content guard  | `body is not defined` + empty `describe()` gone   |
+| v1.41   | 2026-05-14 | Planner retry + noop retry + monorepo meta          | `ts_fail` (workspace imports) + `llm_parse_fail` → ~0 |
+| v1.43   | 2026-05-15 | Full 12-task bench refinement (Gemma)              | hono 5/6, trpc 5/6 — **real-repo 92 % peak**       |
+| v1.47   | 2026-05-15 | H4 prompt fix (validate option)                    | hono **6/6** ✅                                    |
+| v1.50   | 2026-05-15 | Structural anchor v2 (overload-aware)              | hono L6 large-file (>480 LOC) **3/4**             |
+| v1.51   | 2026-05-15 | Extension detection (.tsx, .mts)                   | zod cross-repo **4/4**                            |
+| v1.52   | 2026-05-15 | `GET /project/:id/healthcheck`                     | Pre-flight surfaces missing build / vitest setup  |
+| v1.61   | 2026-05-18 | Qwen3-35B MoE 32K as default Coder                 | Sandbox 7/7; ~11 tok/s on RTX 3090               |
+| v1.63   | 2026-05-18 | `read_file start_line` + large-file nudge          | vite **6/6** ✅, including 1835-line file edit    |
+| v1.64   | 2026-05-19 | Repo memory (`repo_patterns` table)                | Recurring errors visible to Planner / Coder       |
+| v1.65b  | 2026-05-19 | `add_type_member` AST tool                         | T6 noop on 900-line `dataLoader.ts` → commit      |
+| v1.65c  | 2026-05-19 | TestRunner timeout 60 s → 120 s                    | Large monorepo (trpc) tests stop being killed     |
+| v1.65d  | 2026-05-20 | `add_type_member` intersection + ADD-OPTION rule   | trpc **5/6** with Qwen3 MoE — equals Gemma peak   |
+
+Compounded: **6/16 (~38 %) → 11/12 (92 %)** on the combined real-repo bench in 7 days.
 
 ---
 

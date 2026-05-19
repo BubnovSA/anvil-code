@@ -1,4 +1,4 @@
-# Contributing
+# Contributing to Anvil-Code
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ npm run build
 ## Running tests
 
 ```bash
-npm test          # all 12 packages, ~530 unit tests
+npm test          # all 12 packages, 610 unit tests (3 pre-existing native ASTParser failures are expected)
 ```
 
 Tests are pure unit tests — no LLM backend required.
@@ -54,7 +54,7 @@ Tests are pure unit tests — no LLM backend required.
 The `docs/benchmarks/` directory contains task-level regression benchmarks (L1–L4). Before submitting changes that affect agent behavior, run the relevant bench level against the sandbox and include results in your PR description.
 
 Bench setup: `docs/benchmarks/tasks.md`  
-Sandbox: a minimal 5-file TypeScript repo — see `docs/benchmarks/runs/` for examples.
+Sandbox: a ~30-file Fastify users API in `rag-system-sandbox/` (6 production files + tests + fixtures) — see `docs/benchmarks/runs/` for examples.
 
 ## Code style
 

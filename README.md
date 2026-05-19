@@ -6,14 +6,15 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="MIT License"/></a>
   <img src="https://img.shields.io/badge/TypeScript-5.4+-3178c6.svg" alt="TypeScript"/>
   <img src="https://img.shields.io/badge/Node.js-18+-339933.svg" alt="Node.js"/>
-  <img src="https://img.shields.io/badge/tests-589%20passed-22c55e.svg" alt="589 tests"/>
+  <img src="https://img.shields.io/badge/tests-610%20passed-22c55e.svg" alt="610 tests"/>
   <img src="https://img.shields.io/badge/packages-12%20clean-22c55e.svg" alt="12 packages"/>
   <img src="https://img.shields.io/badge/sandbox-87.5%25-22c55e.svg" alt="87.5% sandbox"/>
   <img src="https://img.shields.io/badge/real--repo-92%25-22c55e.svg" alt="92% real repos"/>
+  <img src="https://img.shields.io/badge/version-v1.65d-blue.svg" alt="v1.65d"/>
 </p>
 
 <p align="center">
-  <em>Local autonomous coding agent for TypeScript — submits tasks, plans, writes code, validates, and commits.<br/>
+  <em>Anvil-Code — local autonomous coding agent for TypeScript. Submits tasks, plans, writes code, validates, and commits.<br/>
   Runs on your own GPU. No cloud. No subscriptions. No telemetry.</em>
 </p>
 
@@ -21,20 +22,34 @@
 POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer ×3 → git commit
 ```
 
+<!--
+  Demo gif lives at assets/demo.gif (not yet captured).
+  Recording guide (automated terminal + manual VSCode UI): docs/demo/RECORDING.md
+  Once assets/demo.gif exists, uncomment the block below and remove this comment.
+
+<p align="center">
+  <img src="assets/demo.gif" alt="Anvil-Code in VSCode — task submitted, SSE stream of pipeline phases, commit hash in toast" width="820"/>
+  <br/>
+  <em>Submit task → live SSE stream → commit. See <a href="docs/SETUP.md">docs/SETUP.md</a> to reproduce.</em>
+</p>
+-->
+
 ---
 
 ## Benchmark
 
-> Latest numbers from v1.43 bench (2026-05-15). Raw data: [BENCHMARK.md](BENCHMARK.md)
+> Latest numbers from v1.65d (2026-05-20). Raw data: [BENCHMARK.md](BENCHMARK.md)
 
 ### By target codebase
 
 | Target | Files | Tasks | 🟢 Pass | 🔴 Fail | Rate |
 |--------|-------|-------|---------|---------|------|
 | `rag-system-sandbox` (curated) | ~30 | 16 | **14** | 2 | 🟢 **87.5 %** |
-| `honojs/hono` (real OSS) | 366 | 6 | **5** | 1 | 🟢 **83 %** |
+| `honojs/hono` (real OSS) | 366 | 6 | **6** | 0 | 🟢 **100 %** |
 | `trpc/trpc` (real OSS) | 907 | 6 | **5** | 1 | 🟢 **83 %** |
 | **Combined real-repo** | | **12** | **11** | 1 | 🟢 **92 %** |
+| `vitejs/vite` (cross-repo) | monorepo | 6 | **6** | 0 | 🟢 **100 %** |
+| `colinhacks/zod` (cross-repo) | library | 4 | **4** | 0 | 🟢 **100 %** |
 
 ### By task category (sandbox)
 
@@ -55,20 +70,23 @@ POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer
 | 4 – 5 new abstractions | 🟡 ~70 % | Reviewer becomes the gating factor |
 | 5 + architectural | 🔴 ~30 % | Context or scope overrun |
 
-### Real-repo progress (v1.38 → v1.52)
+### Real-repo progress (v1.38 → v1.65d)
 
-| Metric | v1.38 (2026-05-13) | v1.52 (2026-05-15) | Δ |
+| Metric | v1.38 (2026-05-13) | v1.65d (2026-05-20) | Δ |
 |---|---|---|---|
 | Real-repo success rate | 🟡 **42 %** (5/12) | 🟢 **92 %** (11/12) | **+50 pp** |
-| `ts_fail` (bad workspace imports) | 🔴 29 % | 🟢 0 % | Monorepo meta injection |
-| `reviewer_reject` | 🔴 29 % | 🟢 ~8 % | BUGFIX_SPEC Fixer dispatch |
-| `no_op` (Coder 0 changes) | 🔴 14 % | 🟢 0 % | NoopStep retry + CodeGraph hint |
-| `llm_parse_fail` | 🔴 14 % | 🟢 ~4 % | Planner + Architect retry |
-| `validation_incomplete` | 🔴 14 % | 🟢 0 % | Validation timeout guard |
+| `ts_fail` (bad workspace imports) | 🔴 29 % | 🟢 0 % | Monorepo meta injection (v1.38 D2) |
+| `reviewer_reject` | 🔴 29 % | 🟢 ~8 % | BUGFIX_SPEC Fixer dispatch (v1.39-c) + lenient prompt (v1.65a) |
+| `no_op` (Coder 0 changes) | 🔴 14 % | 🟢 0 % | NoopStep retry + `add_type_member` AST tool (v1.65b) |
+| `llm_parse_fail` | 🔴 14 % | 🟢 ~4 % | Planner + Architect retry (v1.41) |
+| `validation_incomplete` | 🔴 14 % | 🟢 0 % | Validation timeout guard (v1.39-b) |
+| TestRunner timeout (large monorepos) | 🔴 timeout at 60s | 🟢 commits | 60s → 120s (v1.65c) |
 
 ### Cumulative mode (sequential tasks, building on each other)
 
-6 tasks run sequentially on sandbox, each forking from `auto/cumulative` (accumulated state of all prior committed tasks):
+Sequential tasks on sandbox, each forking from `auto/cumulative` (accumulated state of all prior committed tasks).
+
+**Gemma 4 26B baseline (v1.42, 6 tasks):**
 
 | Task | Description | Result |
 |------|-------------|--------|
@@ -80,6 +98,10 @@ POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer
 | C6 | Rate limiting in server.ts | 🟢 commit |
 
 **6/6 ✅** — no merge conflicts, no race conditions, no manual work between tasks.
+
+**Qwen3-35B MoE (v1.65d, 5 tasks on fresh sandbox `907dbae`):**
+
+L1.1 → L1.2 → L2.1 → L3.1 → L2.3 — **5/5 ✅** (`/health` + Zod validation + request-logging + class refactor + soft-delete). Confirms cumulative state holds on MoE architecture too.
 
 ### Large-file surgery (L6 bench, v1.50)
 
@@ -106,19 +128,19 @@ POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer
 | Bugfix (test → one file) | 🟢 ~90 % | Clear signal from failing test |
 | LRU / TTL / algorithmic logic | 🟢 ~90 % | Model generates correct structures |
 | Multi-file feature (2–4 files) | 🟢 ~90 % | 2-hop retrieval + FEATURE_SPEC guidance |
-| Refactor across 5+ files | 🟡 ~50 % | N-hop reverse callers + payload filter (Qdrant) |
+| Refactor across 5+ files | 🟡 ~50 % | N-hop reverse callers + payload filter (Qdrant planned in Phase 5) |
 | Large class surgery (>700 LOC) | 🟡 ~75 % | Structural anchor v2 (overload-aware) — see L6 bench |
-| Complex generics (tRPC-style) | 🔴 ~20 % | Model capability limit on Gemma 26B |
-| Cumulative chained tasks | 🟢 ~100 % | v1.39-a auto ff-merge; 6/6 on sandbox |
+| Complex generics (tRPC-style) | 🟡 ~50 % | Improved via `add_type_member` (v1.65b); thinking-mode over-refactor still a risk |
+| Cumulative chained tasks | 🟢 ~100 % | v1.39-a auto ff-merge; 6/6 Gemma + 5/5 Qwen3 MoE on sandbox |
 
 ### Cross-repo transferability
 
-System tested on repos outside the hono/trpc training distribution (v1.51–v1.52):
+System tested on repos outside the hono/trpc training distribution (v1.51–v1.63):
 
 | Repo | Type | Tasks | Result | Notes |
 |------|------|-------|--------|-------|
 | `colinhacks/zod` | validation library | 4 | **4/4 ✅** | After v1.51 extension detection |
-| `vitejs/vite` | bundler monorepo | 6 | 0/6 | Needs `pnpm build` first → `healthcheck` reveals this |
+| `vitejs/vite` | bundler monorepo | 6 | **6/6 ✅** | v1.63 with Qwen3-35B MoE — including 1835-line file edit |
 
 **Pre-flight:** `GET /project/:id/healthcheck` surfaces environment issues (missing node_modules, broken vitest setup) before bench runs. Recommended workflow for new repos:
 ```bash
@@ -148,14 +170,29 @@ curl /project/<id>/healthcheck
 
 ### Validated model stack
 
+Two configurations are benchmarked and both pass headline numbers — pick by hardware and preference.
+
+**Default (v1.61+): single-model Qwen3 MoE**
+
+| Role | Alias | Model | VRAM |
+|---|---|---|---|
+| Coder / Fixer / Architect / Planner / Reviewer / Tester | `qwen3-32k` | qwen3-35B-A3B MoE (3 B active, 32K ctx) | ~22 GB |
+| Embeddings | `embed` | nomic-embed-text-v1.5 (768 dim) | ~0.1 GB |
+| Reranker *(optional)* | `reranker` | bge-reranker-v2-m3 | ~0.4 GB |
+
+Active default since v1.61. Thinking mode, ~11 tok/s on RTX 3090 at real-agent context. Set `LLM_LARGE_MODEL=qwen3-32k`.
+
+**Alternative (v1.43 peak): Gemma 4 26B + Qwen3 small**
+
 | Role | Alias | Model | VRAM |
 |---|---|---|---|
 | Coder / Fixer / Architect | `gemma` | gemma-4-26b-a4b-it-mxfp4-MoE ctx-32k | ~14 GB |
 | Planner / Reviewer / Tester | `qwen3` | qwen3-35B-A3B MoE (3 B active) | ~22 GB |
 | Embeddings | `embed` | nomic-embed-text-v1.5 (768 dim) | ~0.1 GB |
-| Reranker *(optional)* | `reranker` | bge-reranker-v2-m3 | ~0.4 GB |
 
-llama-swap auto-loads models in VRAM on demand and unloads idle ones — `gemma` and `qwen3` fit concurrently on a 24 GB card with KV cache compression.
+Used for the original v1.43 peak (hono 6/6, trpc 5/6). Holds 87.5 % sandbox + 92 % real-repo. Set `LLM_LARGE_MODEL=gemma`.
+
+llama-swap auto-loads models in VRAM on demand and unloads idle ones — both configurations fit on a 24 GB card with q4_0 KV cache compression.
 
 ---
 
@@ -183,7 +220,8 @@ Key variables:
 
 ```env
 LLM_URL=http://localhost:8080   # llama-swap endpoint
-LLM_LARGE_MODEL=gemma           # validated default (87.5% on sandbox)
+LLM_LARGE_MODEL=qwen3-32k       # active default since v1.61 (11 tok/s, thinking mode)
+# LLM_LARGE_MODEL=gemma         # alternative: original v1.43 peak stack
 PROJECT_ROOT=/path/to/your/repo
 ```
 
@@ -204,7 +242,7 @@ cd packages/vscode-extension && npm run package
 # Install the .vsix → Extensions → ⋯ → Install from VSIX
 ```
 
-Run **RAG System: Submit Task** from the command palette. Pick project, pick mode, watch SSE stream in the output channel.
+Run **Anvil-Code: Submit Task** from the command palette. Pick project, pick mode, watch SSE stream in the output channel.
 
 **curl**:
 
@@ -246,12 +284,12 @@ Context is supplied by a **RAG Engine**: hybrid BM25 + HNSW dense retrieval (RRF
 
 | Limitation | Severity | Status |
 |---|---|---|
-| Real-repo success rate ~38 % | High | Ongoing — next: multi-hop retrieval, scope tightening |
-| Large class surgery (>700 LOC) | High | Backlog — better anchor disambiguation |
-| Complex generic refactors (tRPC) | High | Limited by 32 K context ceiling |
-| Cross-service refactoring | High | 1-hop graph only; multi-hop in v1.41+ |
-| Cumulative task chaining | Medium | Unreliable on 32 B local models |
-| TypeScript / JS only (structural tools) | Medium | Python/Rust/Go parsed for context but not structurally edited |
+| Complex generic refactors (tRPC-style internals) | High | Limited by 32 K context + model variance on thinking-mode over-refactor; `add_type_member` (v1.65b) helps |
+| Cross-service refactoring (5+ callsites) | Medium | Currently 1-hop graph traversal; multi-hop closure planned (Phase 5) |
+| Large class surgery (>700 LOC) | Medium | 3/4 on hono L6 bench; 780-line files with complex generics still fail |
+| HNSW JSON vector store cap ~10K items | Medium | Qdrant migration in Phase 5 |
+| TypeScript / JS only (structural tools) | Medium | Python / Rust / Go parsed for context, not structurally edited |
+| 24 GB VRAM ceiling → 32 B Q4 models | Hardware | Realistic ceiling: 70–80 % atomic / 30–40 % multi-file locally |
 | Single machine, single user | Low | By design for local use |
 
 ---
@@ -264,7 +302,7 @@ Context is supplied by a **RAG Engine**: hybrid BM25 + HNSW dense retrieval (RRF
 | [docs/SETUP.md](docs/SETUP.md) | llama-swap install, model picks, hardware |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Agent pipeline, packages, how to extend |
 | [ROADMAP.md](ROADMAP.md) | Current iteration, next steps, known issues |
-| [CHANGELOG.md](CHANGELOG.md) | Version history v1.0 → v1.38 |
+| [CHANGELOG.md](CHANGELOG.md) | Version history v1.0 → v1.65d |
 
 ---
 

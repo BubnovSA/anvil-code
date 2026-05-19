@@ -17,7 +17,7 @@
       "activitybar": [
         {
           "id": "ragSystem",
-          "title": "RAG System",
+          "title": "Anvil-Code",
           "icon": "$(rocket)"
         }
       ]
@@ -29,14 +29,14 @@
       ]
     },
     "commands": [
-      { "command": "rag.refresh", "title": "RAG System: Refresh", "icon": "$(refresh)" },
-      { "command": "rag.connect", "title": "RAG System: Set API URL" },
-      { "command": "rag.runTask", "title": "RAG System: Submit Task", "icon": "$(play)" },
-      { "command": "rag.indexProject", "title": "RAG System: Index Active Project", "icon": "$(database)" },
-      { "command": "rag.registerProject", "title": "RAG System: Register Project", "icon": "$(add)" },
-      { "command": "rag.selectActiveProject", "title": "RAG System: Select Active Project" },
-      { "command": "rag.streamTask", "title": "RAG System: Stream Task Progress" },
-      { "command": "rag.showOutput", "title": "RAG System: Show Output" }
+      { "command": "rag.refresh", "title": "Anvil-Code: Refresh", "icon": "$(refresh)" },
+      { "command": "rag.connect", "title": "Anvil-Code: Set API URL" },
+      { "command": "rag.runTask", "title": "Anvil-Code: Submit Task", "icon": "$(play)" },
+      { "command": "rag.indexProject", "title": "Anvil-Code: Index Active Project", "icon": "$(database)" },
+      { "command": "rag.registerProject", "title": "Anvil-Code: Register Project", "icon": "$(add)" },
+      { "command": "rag.selectActiveProject", "title": "Anvil-Code: Select Active Project" },
+      { "command": "rag.streamTask", "title": "Anvil-Code: Stream Task Progress" },
+      { "command": "rag.showOutput", "title": "Anvil-Code: Show Output" }
     ],
     "menus": {
       "view/title": [
@@ -51,12 +51,12 @@
       ]
     },
     "configuration": {
-      "title": "RAG System",
+      "title": "Anvil-Code",
       "properties": {
         "ragSystem.apiUrl": {
           "type": "string",
           "default": "http://localhost:3000",
-          "description": "Base URL of the RAG System API server."
+          "description": "Base URL of the Anvil-Code API server."
         },
         "ragSystem.refreshIntervalMs": {
           "type": "number",

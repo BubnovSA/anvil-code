@@ -1,6 +1,6 @@
 # Setup
 
-End-to-end install guide for running the RAG System on your own machine.
+End-to-end install guide for running Anvil-Code on your own machine.
 
 ## 1. Hardware
 
@@ -106,7 +106,7 @@ curl -s http://localhost:8080/v1/chat/completions \
 
 Full endpoint reference: [llama-api-reference.md](llama-api-reference.md).
 
-## 3. RAG System
+## 3. Anvil-Code
 
 ### 3a. Clone and build
 
@@ -129,7 +129,8 @@ The example file is fully commented. The variables you almost always change:
 
 ```env
 LLM_URL=http://localhost:8080        # llama-swap endpoint
-LLM_LARGE_MODEL=gemma                # validated since v1.35 bench (7/8 on L2.x)
+LLM_LARGE_MODEL=qwen3-32k            # active default since v1.61 (Qwen3-35B MoE, 11 tok/s, thinking)
+# LLM_LARGE_MODEL=gemma              # alternative: v1.43 peak stack (Gemma 4 26B)
 LLM_SMALL_MODEL=qwen3
 LLM_EMBED_MODEL=embed
 PROJECT_ROOT=/absolute/path/to/your/repo
@@ -206,12 +207,14 @@ In VS Code: **Extensions → ⋯ → Install from VSIX…** and pick the `.vsix`
 
 After install:
 
-1. Open the **RAG System** sidebar (rocket icon in Activity Bar).
-2. **RAG System: Set API URL** → enter `http://localhost:3000` if not already.
-3. **RAG System: Register Project** → pick the current workspace folder.
-4. **RAG System: Submit Task** → pick mode, type the task, watch the stream in the **RAG System** output channel.
+1. Open the **Anvil-Code** sidebar (rocket icon in Activity Bar).
+2. **Anvil-Code: Set API URL** → enter `http://localhost:3000` if not already.
+3. **Anvil-Code: Register Project** → pick the current workspace folder.
+4. **Anvil-Code: Submit Task** → pick mode, type the task, watch the stream in the **Anvil-Code** output channel.
 
 The status bar shows the active project; while a task is running, a second item shows the current phase (queued / running / planning / step / validate / committed).
+
+> **Demo gif:** see [docs/demo/RECORDING.md](demo/RECORDING.md) to record a terminal or VSCode gif for the README.
 
 ## 5. Troubleshooting
 
@@ -222,5 +225,5 @@ The status bar shows the active project; while a task is running, a second item 
 | Indexing hangs at 0 % | Embedding model not loaded | `curl $LLM_URL/v1/embeddings` should return 200 |
 | `validation_fail` on first task in a real repo | Pre-existing failing tests | Baseline detection runs on first task — re-submit |
 | `auto/task-*` branches piling up | Successful and failed tasks both create branches | `git branch \| grep auto/ \| xargs git branch -D` to clean |
-| VS Code extension says "no projects" | API URL not reachable from VS Code | **RAG System: Set API URL** to confirm; check firewall |
+| VS Code extension says "no projects" | API URL not reachable from VS Code | **Anvil-Code: Set API URL** to confirm; check firewall |
 | Model unload mid-task | llama-swap idle timer kicked in | Increase `idle_timeout` in `config.yaml` (default 5 min) |

@@ -17,27 +17,27 @@ export function activate(context: vscode.ExtensionContext): void {
   const setActive = async (id: string | undefined) => {
     activeProjectId = id;
     await context.workspaceState.update(ACTIVE_PROJECT_KEY, id);
-    projectStatusItem.text = `$(rocket) RAG: ${activeProjectName() ?? 'no project'}`;
+    projectStatusItem.text = `$(rocket) Anvil: ${activeProjectName() ?? 'no project'}`;
     projectsView.refresh();
     tasksView.refresh();
   };
   const activeProjectName = () =>
     activeProjectId ? projectsView.current().find(p => p.id === activeProjectId)?.name : undefined;
 
-  const output = vscode.window.createOutputChannel('RAG System', { log: true });
+  const output = vscode.window.createOutputChannel('Anvil-Code', { log: true });
   context.subscriptions.push(output);
 
   const projectStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   projectStatusItem.command = 'rag.selectActiveProject';
-  projectStatusItem.text = '$(rocket) RAG: ...';
-  projectStatusItem.tooltip = 'Click to switch active RAG project';
+  projectStatusItem.text = '$(rocket) Anvil: ...';
+  projectStatusItem.tooltip = 'Click to switch active Anvil-Code project';
   projectStatusItem.show();
   context.subscriptions.push(projectStatusItem);
 
   // Task status item appears only while a task is streaming.
   const taskStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
-  taskStatusItem.tooltip = 'Click to open the RAG System output channel';
-  taskStatusItem.command = { command: 'rag.showOutput', title: 'Show RAG Output' };
+  taskStatusItem.tooltip = 'Click to open the Anvil-Code output channel';
+  taskStatusItem.command = { command: 'rag.showOutput', title: 'Show Anvil-Code Output' };
   context.subscriptions.push(taskStatusItem);
 
   const projectsView = new ProjectsView(api, () => activeProjectId);
@@ -56,7 +56,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const first = projectsView.current()[0];
       if (first) await setActive(first.id);
     } else {
-      projectStatusItem.text = `$(rocket) RAG: ${activeProjectName() ?? activeProjectId.slice(0, 8)}`;
+      projectStatusItem.text = `$(rocket) Anvil: ${activeProjectName() ?? activeProjectId.slice(0, 8)}`;
     }
     tasksView.refresh();
   })();
@@ -79,7 +79,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('rag.connect', async () => {
       const url = await vscode.window.showInputBox({
-        prompt: 'RAG API URL',
+        prompt: 'Anvil-Code API URL',
         value: api.baseUrl,
       });
       if (!url) return;
@@ -132,7 +132,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!projectId) {
         const projects = projectsView.current();
         if (projects.length === 0) {
-          void vscode.window.showWarningMessage('No projects registered. Use "RAG: Register Project" first.');
+          void vscode.window.showWarningMessage('No projects registered. Use "Anvil-Code: Register Project" first.');
           return;
         }
         const pick = await vscode.window.showQuickPick(
@@ -214,7 +214,7 @@ async function streamToOutput(
   output.show(true);
   output.appendLine(`\n── streaming ${id} ──`);
   const shortId = id.slice(0, 8);
-  statusItem.text = `$(sync~spin) RAG: ${shortId}`;
+  statusItem.text = `$(sync~spin) Anvil: ${shortId}`;
   statusItem.show();
 
   const summary: StreamSummary = { fileCount: 0, commitSkipped: false, partial: false, done: false };
@@ -238,12 +238,12 @@ async function streamToOutput(
 
 function updateStatusFromEvent(item: vscode.StatusBarItem, shortId: string, event: TaskEvent): void {
   switch (event.type) {
-    case 'queued':       item.text = `$(clock) RAG: ${shortId} queued`; break;
-    case 'running':      item.text = `$(sync~spin) RAG: ${shortId} running`; break;
-    case 'plan':         item.text = `$(sync~spin) RAG: ${shortId} planning`; break;
-    case 'step_start':   item.text = `$(sync~spin) RAG: ${shortId} step`; break;
-    case 'validation_start': item.text = `$(sync~spin) RAG: ${shortId} validate`; break;
-    case 'commit':       item.text = `$(check) RAG: ${shortId} committed`; break;
+    case 'queued':       item.text = `$(clock) Anvil: ${shortId} queued`; break;
+    case 'running':      item.text = `$(sync~spin) Anvil: ${shortId} running`; break;
+    case 'plan':         item.text = `$(sync~spin) Anvil: ${shortId} planning`; break;
+    case 'step_start':   item.text = `$(sync~spin) Anvil: ${shortId} step`; break;
+    case 'validation_start': item.text = `$(sync~spin) Anvil: ${shortId} validate`; break;
+    case 'commit':       item.text = `$(check) Anvil: ${shortId} committed`; break;
     case 'index_file':   /* high-frequency, skip */ break;
     default: break;
   }
@@ -277,7 +277,7 @@ function mergeSummary(summary: StreamSummary, event: TaskEvent): void {
 function notifyTerminal(taskId: string, s: StreamSummary): void {
   const short = taskId.slice(0, 8);
   if (s.error) {
-    void vscode.window.showErrorMessage(`RAG task ${short} failed: ${s.error}`);
+    void vscode.window.showErrorMessage(`Anvil-Code task ${short} failed: ${s.error}`);
     return;
   }
   if (!s.done) return; // stream closed without 'done' — already surfaced via Output
@@ -293,7 +293,7 @@ function notifyTerminal(taskId: string, s: StreamSummary): void {
     parts.push('no files changed');
   }
   if (s.partial) parts.push('partial');
-  void vscode.window.showInformationMessage(`RAG task ${short}: ${parts.join(' · ')}`);
+  void vscode.window.showInformationMessage(`Anvil-Code task ${short}: ${parts.join(' · ')}`);
 }
 
 function sleep(ms: number): Promise<void> {
