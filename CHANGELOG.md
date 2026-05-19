@@ -5,6 +5,12 @@
 
 ---
 
+## trpc bench v1.65d — 5/6 T3 first pass (2026-05-20)
+
+T1✅ T2✅ **T3✅**(первый стабильный pass!) T4✅ T5✅ T6❌(reviewer_reject, wrong retry). T3 использовал `HTTPErrorHandler` из trpc internals + intersection `add_type_member`. T6 — variance. Score 5/6, паттерн сдвинулся: T3→✅, T6→❌.
+
+---
+
 ## Cumulative bench Qwen3 MoE — 5/5 (100%) (2026-05-20)
 
 Sequential tasks on new sandbox (907dbae): L1.1→L1.2→L2.1→L3.1→L2.3 — все 5 ✅, каждый мержится в `auto/cumulative`. Финальное состояние: /health + Zod validation + request-logging + class refactor + soft-delete. **Равно Gemma record.** Qwen3 MoE стабилен на накоплении state.
