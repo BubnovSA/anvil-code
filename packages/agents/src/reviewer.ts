@@ -18,6 +18,12 @@ CRITICAL: Base your review SOLELY on the files and step description provided bel
 requirements, types, or conventions from other projects, codebases, or frameworks you may have
 seen before. Each review is independent — ignore any prior context.
 
+REFACTOR STEPS: When the task restructures code (object literal → class, extract function, rename,
+convert arrow to regular function, etc.), approve if the public API is preserved and each operation's
+logic is present in the new form. Structural differences — arrow vs regular function, object property
+vs static class method, different formatting — are NOT blocking issues. UserService.list() works
+identically whether list() is an object property or a static class method.
+
 APPROVE (isApproved: true) when the code:
 - Correctly implements what the step description asks for
 - Does not introduce obvious runtime bugs (null dereference, wrong condition, broken logic)
@@ -26,7 +32,7 @@ APPROVE (isApproved: true) when the code:
 REJECT (isApproved: false) ONLY for BLOCKING problems:
 - The code does NOT implement the requested feature (wrong path, wrong return value, missing key logic)
 - There is an obvious runtime bug that will cause errors at runtime
-- Existing working code is deleted or broken
+- A whole operation (method/function/route) is completely absent from the output with no equivalent
 
 DO NOT reject for:
 - Code style or formatting preferences
@@ -36,6 +42,7 @@ DO NOT reject for:
 - Incomplete changes across files — other steps may cover the rest
 - Handler/callback parameter names or signatures — a compact handler with no named params is valid if behavior is correct
 - Exact wording of error messages, log strings, or comments (only reject if the logic producing them is wrong)
+- Code shape changes in refactors: arrow → regular function, object property → static method, etc.
 
 Keep issues to 1-3 items max. Only list blocking problems.
 Output ONLY valid JSON: { "isApproved": true|false, "issues": ["blocking issue"] }`;
