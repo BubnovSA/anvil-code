@@ -5,6 +5,16 @@
 
 ---
 
+## v1.65b — add_type_member: AST-anchored interface/type member insertion (2026-05-19)
+
+New structural tool for tool-calling Coder: `add_type_member(file, type_name, member)`. Uses TypeScript Compiler API to locate an `interface` or type-alias object literal by name, finds the closing `}` line, inserts the member with correct indent. No line-number guessing — model names the type, runtime does the navigation.
+
+Target: T6 dataLoader retry — `add_type_member("dataLoader.ts", "DataLoaderOptions", "retry?: number")` instead of hunting for the right lines in a 900-line file. Same architectural pattern as existing `add_method`/`replace_method` tools.
+
+5 unit tests added. Build 12/12 ✅, tests 607/610 ✅.
+
+---
+
 ## v1.65a — Reviewer leniency for refactor steps (2026-05-19)
 
 Added REFACTOR STEPS paragraph to Reviewer prompt: structural changes (object→class, arrow→regular fn, property→static method) are not blocking if public API is preserved. Tightened REJECT criterion from "existing code deleted" to "whole operation completely absent". **L3.1 result: 1/3** in sample run — statistically inconclusive vs. pre-fix 50-70%. Root cause confirmed: Coder sometimes generates class without `static` keyword (Reviewer correctly rejects). Real fix is AST-level class conversion (v1.65b).
