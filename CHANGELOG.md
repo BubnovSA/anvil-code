@@ -5,6 +5,18 @@
 
 ---
 
+## v1.64 — Repo memory: learned patterns from Fixer fixes (2026-05-19)
+
+**Problem:** Model repeats the same import/API mistakes across tasks in the same repo (trpc T2: TS2307 bad import path happened 6 times). The `failures` table counted errors but didn't inject the lesson into future task context.
+
+**Fix:** New `repo_patterns` table in `memory.db` (per-project). When validation Fixer successfully repairs TS/test issues, the raw error text is saved. On subsequent tasks, Planner + Coder + Fixer see a "Repo-specific patterns" section above Project Conventions with these learned constraints.
+
+**Expected effect:** After first T2 failure + Fixer fix in trpc → second T2 run would see "TS2307: Cannot find module '../../unstable-core-do-not-import/...' was previously fixed" and use correct import path proactively.
+
+**Tests:** 602/605 ✅ (3 pre-existing ASTParser only).
+
+---
+
 ## trpc bench session — Qwen3-35B MoE (2026-05-19)
 
 **Result:** trpc **2/6 (33%)**. T1✅ (JSDoc, 20 lines) T4✅ (createTimeout, 5 lines). T2❌ ts_fail (bad import path) T3❌ vitest crash (Qwen3 over-refactored StandaloneHandlerOptions types) T5❌ test_fail (hardcoded limit, broke existing maxBodySize option) T6❌ noop (900-line dataLoader, model decided no changes needed).
