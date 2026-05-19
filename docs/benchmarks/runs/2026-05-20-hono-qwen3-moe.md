@@ -62,6 +62,18 @@ Gemma handles these more reliably because it takes a more conservative, direct a
 
 ---
 
+## H4 root cause — wrong prompt, not system failure
+
+H4 original prompt: "Add a requestId() middleware..." — the middleware ALREADY EXISTS in hono 4.12.18. Reviewer rejected because Coder tried to recreate it, missing the existing `generator` option.
+
+H4 r2 attempt: "update to set X-Request-Id on request object" — `Request.headers` is read-only in Fetch API, TS pre-check failed.
+
+H4 r3 (correct): "Add a validate option to RequestIdOptions" — used `add_type_member` + `replace_in_file`. **✅ committed in ~100s.**
+
+**Real hono capability: 6/6 (100%)** with correct prompts. H4 was a bench setup error.
+
+---
+
 ## Speed
 
 All hono tasks complete in 1-2 minutes (vs trpc's 5-10 minutes). hono is 366 TS files, test suite runs in ~15s clean — well within the 120s TestRunner timeout.

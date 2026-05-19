@@ -7,7 +7,7 @@ Quantitative track record of the RAG System on TypeScript codebases. Methodology
 | Target                | Size           | Tasks | Success | Notes                          |
 |-----------------------|----------------|-------|---------|--------------------------------|
 | `rag-system-sandbox`  | 30 TS files    | 16    | **87.5 %** (14/16) | Curated suite L1–L5, all categories |
-| `honojs/hono`         | 366 TS files   | 6     | **100 %** (6/6, v1.47 Gemma) / **83%** (5/6, v1.65d Qwen3) | Real OSS; H4 middleware fails with Qwen3 |
+| `honojs/hono`         | 366 TS files   | 6     | **100 %** (6/6, v1.47 Gemma + v1.65d Qwen3 with correct prompts) | H4 bench setup error fixed; real capability 6/6 |
 | `trpc/trpc`           | 907 TS files   | 6     | **67 %** (4/6, v1.43 Gemma best) | pnpm monorepo, project refs; Qwen3 MoE: 2/6 (33%) — model variance |
 | **Combined real-repo** | | **12** | **92 % (11/12)** | v1.43 peak; 83–92% across runs |
 
